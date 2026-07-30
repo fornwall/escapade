@@ -1,0 +1,457 @@
+# Desktop notifications
+#
+# One file per terminal feature. Everything `escapade notification explain`
+# prints comes from here, so prose edits need no Rust changes.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslashes
+#     sequences survive verbatim.
+#   * Write sequences symbolically: ESC, CSI, OSC, ST, BEL — never embed a real
+#     0x1b byte in this file. `escapade` prints these as text, and a literal
+#     control byte here would be executed by the reader's terminal instead.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+#
+# This feature is unusual: there is no single protocol, there are three, and the
+# interesting content is the comparison between them. The `[[sequence]]` blocks
+# are therefore grouped by protocol rather than by verb, and every `[[support]]`
+# row says in its notes *which* of the three that terminal implements.
+
+id = "notifications"
+name = "Desktop notifications"
+tagline = "Raise a real desktop notification from a program running in the terminal — no notify-send, no osascript, and it works over ssh."
+status = "de-facto-standard"
+author = "iTerm2 (OSC 9), rxvt-unicode (OSC 777), Kovid Goyal (OSC 99)"
+introduced = "2010-01"
+transport = "OSC"
+spec_url = "https://sw.kovidgoyal.net/kitty/desktop-notifications/"
+examples_url = "https://sw.kovidgoyal.net/kitty/kittens/notify/"
+
+summary = '''
+A program running in the terminal can ask the desktop to show a notification by printing an escape sequence. No helper binary, no D-Bus client, no platform-specific code — and because it travels over the same stream as your output, **it works through ssh**, which is the thing `notify-send` cannot do.
+
+The catch is that there is no *one* sequence. There are three, invented independently over fifteen years, and they differ in what they can express:
+
+| | title | body | urgency | id / replace | icons | can be queried |
+|---|---|---|---|---|---|---|
+| **OSC 9** | no | yes | no | no | no | no |
+| **OSC 777** | yes | yes | no | no | no | no |
+| **OSC 99** | yes | yes | yes | yes | yes | yes |
+
+So the choice is real, and it is not simply "use the newest one": OSC 99 is the only capable protocol and the only one that can be asked whether it is there, but iTerm2 speaks only OSC 9, and kitty deliberately refuses OSC 777.
+
+`escapade notification --protocol auto` picks the richest protocol it believes your terminal implements and **tells you which one it picked and why**, because a tool that silently chose OSC 9 and therefore silently dropped your title is worse than no tool.
+'''
+
+problem = '''
+The alternative is a helper program — `notify-send` on Linux, `osascript` or `terminal-notifier` on macOS, `BurntToast` on Windows. Those work, and they are the right answer when your program *is* a desktop application.
+
+They are the wrong answer from inside a terminal, for two reasons:
+
+* **They run on the wrong machine.** `ssh build-server 'make; notify-send done'` raises a notification on the build server, where nobody is looking. An escape sequence travels back down the same stream your output does, so it surfaces wherever the terminal window is.
+* **They are three different programs.** A shell function that notifies on completion has to detect the platform, check whether the helper is installed, and cope with it being absent. `printf` is on every machine.
+
+The terminal bell is the ancient version of this idea, and several terminals still turn a bell received while unfocused into a desktop notification. It carries no text at all, which is precisely why these sequences exist.
+'''
+
+how_it_works = '''
+All three are **OSC** — Operating System Command — strings:
+
+```
+OSC <number> ; <payload> ST
+```
+
+where `OSC` is `ESC ]` and `ST` is the string terminator `ESC \`. A lone `BEL` is also accepted as a terminator by every implementation, and iTerm2's original documentation uses it.
+
+The number is the whole disagreement:
+
+```
+OSC 9   ; <text> ST                                     iTerm2
+OSC 777 ; notify ; <title> ; <body> ST                  rxvt-unicode
+OSC 99  ; <key>=<value> : <key>=<value> ; <payload> ST   kitty
+```
+
+**A terminal that does not recognise the number discards the entire string.** That is not politeness, it is how OSC parsing is defined: the terminal consumes bytes until the terminator and then does nothing with them. Nothing is printed, no cell is touched, no mode is left set. So a notification is safe to emit unconditionally — the only failure mode is that nothing appears, and there is no version of this where your output ends up corrupted.
+
+That property is what makes capability detection optional here, which is just as well, because two of the three protocols cannot be detected at all.
+'''
+
+payload = '''
+## OSC 9 — one field
+
+```
+OSC 9 ; 42 tests passed ST
+```
+
+That is the entire protocol. The text is in the session's encoding, which in practice means UTF-8. There is no title, no urgency, no id, no way to close it and no way to ask whether it worked. George Nachman, iTerm2's maintainer, on it in 2019: "No subtitles or icons. There is a per-profile preference to disable it. This is a really old control sequence dating to before my stewardship of iTerm. If you're going to build something new, it should be more powerful."
+
+Two things bite. First, **terminals disagree about what the one field is**: Ghostty documents it as the *title*, iTerm2 as the *message*, Rio renders it as a body with an empty title, and Contour renders it as a body under the title `ConEmu`. Second, **ConEmu also claimed OSC 9**, for taskbar progress as `OSC 9 ; 4 ; <state> ; <progress> ST`. Terminals implementing both disambiguate on the first character, so a notification whose text begins with a digit and a semicolon is genuinely ambiguous — `escapade` prefixes a space to such a message and says so on stderr.
+
+## OSC 777 — two fields, split on semicolons
+
+```
+OSC 777 ; notify ; Build finished ; 42 tests passed ST
+```
+
+`OSC 777` is not a notification protocol. It is rxvt-unicode's generic "invoke one of my Perl extensions" hatch — `OSC 777 ; <extension> ; <args> ST` — and `notify` happened to be the extension everyone copied. The original was a few lines of Perl matching `notify;(\S+);(.*)` and shelling out to `notify-send`.
+
+The fields are positional, which is the hazard. A semicolon in the title shifts the body into a fourth field, and implementations disagree about what to do then: foot's regular expression absorbs everything remaining into the body, while Contour requires **exactly three** parts and ignores the notification otherwise. `escapade` therefore turns semicolons in a *title* into commas, and warns when the *body* contains one rather than mangling it, since the body is the last field and "everything remaining" is the common reading.
+
+There is still no urgency, no id and no query. foot applies its own configured urgency; that is the terminal's decision, not yours.
+
+## OSC 99 — keyed metadata, and the only one that can be asked
+
+```
+OSC 99 ; i=build-42 : p=title : u=2 : d=0 ; Build failed ST
+OSC 99 ; i=build-42 : p=body : d=1 ; 3 tests failed in tests/wire.rs ST
+```
+
+Metadata is **colon**-separated `key=value` pairs; the payload is what follows the second semicolon. Both semicolons are always present even when the metadata is empty, which is why the minimal form is `OSC 99 ; ; Hello world ST`. Unknown keys are ignored, which is what makes the protocol extensible where the other two are frozen.
+
+**Encoding.** Payload text must be *escape-code-safe UTF-8*: valid UTF-8 per RFC 3629 containing none of the C0 or C1 control characters — U+0000–U+001F, U+007F and U+0080–U+009F. No newlines, no tabs, no carriage returns. For anything that does not fit, `e=1` says the payload is RFC 4648 base64, and that is also the escape hatch for text containing characters that would confuse the parser. `escapade` uses `e=1` whenever the text contains a semicolon, and strips control characters before that, so hostile text takes the encoded path rather than being rejected.
+
+**Chunking.** One escape code may carry at most **2048 bytes before encoding** or **4096 bytes encoded**. Longer payloads are split across several escape codes, tied together by `i=` and marked `d=0` until the last, which says `d=1` and makes the notification appear. The terminal concatenates payloads of the same `p=` type. `escapade` chunks at 2046 raw bytes — a multiple of three, so base64 emits no intermediate padding — and always on a character boundary, so each chunk is independently valid UTF-8 whether the terminal decodes per chunk or concatenates first.
+
+**Replacement.** Sending a second notification with the same `i=` updates the first in place instead of adding another. That is the difference between a progress indicator and a wall of toasts, and it is the single most useful thing OSC 99 has that the others do not. How smoothly the replacement renders is up to the desktop's notification daemon, not the terminal.
+
+**Querying.** `OSC 99 ; i=<id> : p=? ; ST` asks what this implementation supports, and the reply names payload types, urgencies, activation actions, occasions, sounds, close-event reporting and auto-expiry. A terminal that does not implement OSC 99 says nothing at all, so the query needs a barrier — see the sequence reference below.
+'''
+
+security = '''
+Three things are worth being careful about, and all three are about **text you did not write** ending up inside an escape sequence.
+
+**A control character in the body is an injection.** A body containing a raw `ESC` ends the OSC string early, and everything after it is read by the terminal as a fresh escape sequence. `done` + `ESC \` + `OSC 0 ; pwned BEL` is a one-line window-title hijack that arrives through whatever produced your notification text — a commit message, a test name, a filename. The C1 block matters too: U+009C is an 8-bit `ST` and U+009D an 8-bit `OSC`, single characters that a terminal in 8-bit mode acts on. `escapade` strips every C0 and C1 control before building anything, turning newline, tab and carriage return into a space and dropping the rest; OSC 99's `e=1` base64 path handles the cases where text must survive intact.
+
+**A notification id comes back to you.** With `a=report`, activating an OSC 99 notification makes the terminal write `OSC 99 ; i=<id> ; ST` to your *input* stream. An unsanitized id is therefore an injection into the application, not the terminal — which is why the specification restricts identifiers to `[a-zA-Z0-9_-+.]` and tells terminals to sanitize what they receive. `escapade` sanitizes on the way out as well, so the id it matches is the id it sent.
+
+**Notifications are a nuisance vector.** Nothing in any of these protocols rate limits anything: a program that prints `OSC 9` in a loop fills the user's screen with toasts. Terminals mitigate this in their own ways — foot only notifies while its window is unfocused, iTerm2 has a per-profile switch, Windows Terminal keeps OSC 777 behind an optional feature — and OSC 99's `o=unfocused` lets a well-behaved application opt into the same restraint.
+'''
+
+caveats = '''
+* **Focus.** Several terminals only notify when their window is *not* focused — foot does this by design. That is usually what you want, and it also means your test of "did it work?" fails if you are staring at the terminal when you run it. Switch away, or use OSC 99's `o=always`.
+* **Do not disturb.** The terminal hands the notification to the desktop's notification daemon, which is free to suppress it entirely. macOS Focus modes, GNOME's Do Not Disturb and full-screen inhibition all swallow notifications silently, and the terminal is not told. There is no way to detect this from an escape sequence.
+* **Never send two protocols hoping one lands.** The obvious fallback strategy — emit OSC 99 *and* OSC 777 — produces **two** notifications on foot, Contour and anything else implementing both. Pick one. That is what `--protocol auto` is for, and why it says which one it picked.
+* **Multiplexers eat all three.** tmux filters escape sequences it does not recognise; it needs `set -g allow-passthrough on` and the sequence wrapped in its `DCS tmux;` form with every inner `ESC` doubled. Zellij's behaviour is unverified, and GNU Screen has no passthrough for these at all.
+* **Only OSC 99 says how long a payload may be.** OSC 9 and OSC 777 state no limit and have no chunking, so a long notification depends entirely on the terminal's own OSC string buffer — and a terminal that runs out truncates or drops the string without telling anyone. `escapade` warns past 2048 bytes, which is the limit OSC 99 documents.
+* **OSC 9 and OSC 777 cannot be detected.** No query, no reply, no acknowledgement of any kind. All you can do is work out which terminal you are talking to and consult a table, which is inference and should be labelled as such. The saving grace is that guessing wrong is harmless.
+* **Silence is not failure.** Between "the terminal ignored it", "the terminal was focused", "the desktop suppressed it" and "it appeared and was auto-dismissed before you looked", an application has no way to know what happened. OSC 99's `c=1` close reports and `a=report` activation reports are the closest thing to feedback that exists.
+* **The number space is contested.** OSC 9 is shared with ConEmu's taskbar progress; OSC 777 is shared with every other urxvt Perl extension. Neither has a registry behind it. OSC 99 was proposed to the terminal working group, whose specification issue is still open — which is why kitty went ahead and shipped it anyway.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences, grouped by protocol.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+verb = "OSC 9"
+name = "iTerm2's one-liner"
+purpose = "Raise a notification with a single field of text. The oldest of the three, and the least capable."
+request = "OSC 9 ; 42 tests passed ST"
+notes = '''No reply, ever. There is no title field, no urgency, no id and no acknowledgement, and terminals disagree about whether the one field is the title or the body. Beware of a message starting with a digit followed by `;`: ConEmu's taskbar progress form is `OSC 9 ; 4 ; <state> ; <progress> ST`, and a terminal implementing both will read it as progress rather than as text.'''
+
+[[sequence]]
+verb = "OSC 777"
+name = "rxvt-unicode's notify extension"
+purpose = "Raise a notification with a title and a body, by invoking urxvt's `notify` Perl extension."
+request = "OSC 777 ; notify ; Build finished ; 42 tests passed ST"
+notes = '''No reply, ever. The fields are positional and split on `;`, so a semicolon in the title shifts everything after it. foot takes the last field as "everything remaining"; Contour requires exactly three fields and ignores the notification otherwise. `OSC 777` itself is generic — other urxvt extensions live behind other first fields — so the literal `notify` is not optional.'''
+
+[[sequence]]
+verb = "OSC 99"
+name = "kitty: create or replace a notification"
+purpose = "Raise a notification with a title, a body, an urgency and an id, in one or more escape codes."
+request = "OSC 99 ; i=build-42 : p=title : u=2 : d=0 ; Build failed ST"
+reply = "(none, unless a= or c= asked for one)"
+notes = '''Metadata is colon-separated; the payload follows the second semicolon, and both semicolons are always present. Send the body as a second escape code with `p=body`, and finish with `d=1` (the default) to make the notification appear. Sending again with the same `i=` replaces the notification rather than adding one. `OSC 99 ; ; Hello world ST` is the minimal legal form.'''
+
+[[sequence]]
+verb = "OSC 99"
+name = "kitty: a chunked payload"
+purpose = "Carry a payload larger than one escape code allows, or one that has to be base64-encoded."
+request = "OSC 99 ; i=build-42 : p=body : e=1 : d=0 ; <base64 chunk> ST"
+notes = '''A payload is limited to 2048 bytes before encoding, or 4096 encoded. Every escape code but the last carries `d=0`, and the terminal concatenates payloads of the same `p=` type. `e=1` marks RFC 4648 base64, needed for any text that is not escape-code-safe UTF-8. Chunk on character boundaries so no chunk is half a character, and prefer a chunk size that is a multiple of three so encoding emits no intermediate padding.'''
+
+[[sequence]]
+verb = "OSC 99"
+name = "kitty: close a notification"
+purpose = "Take down a notification raised earlier."
+request = "OSC 99 ; i=build-42 : p=close ; ST"
+notes = '''Requires the `i=` of the notification to close. Neither OSC 9 nor OSC 777 can do this — with no id, there is nothing to name. `p=alive` is the related question: the reply lists the ids of the notifications that still exist.'''
+
+[[sequence]]
+verb = "OSC 99"
+name = "kitty: ask what is supported"
+purpose = "Capability detection — the only query any of the three protocols has."
+request = "OSC 99 ; i=escapade-probe : p=? ; ST"
+reply = "OSC 99 ; i=escapade-probe : p=? ; p=title,body,close : u=0,1,2 : c=1 : w=1 ST"
+notes = '''The reply names the payload types, urgencies, activation actions, occasions and sounds this implementation understands, whether it reports close events (`c=1`) and whether it honours auto-expiry (`w=1`). A terminal without OSC 99 answers nothing, so pair the query with a sequence every terminal answers — Primary Device Attributes, `CSI c` — sent immediately afterwards. Terminals process input in order, so a `CSI c` reply arriving without an OSC 99 reply proves the terminal had its chance. That is the difference between a conclusion and a timeout.'''
+
+[[sequence]]
+verb = "OSC 99"
+name = "kitty: activation report"
+purpose = "Find out that the user clicked the notification."
+request = "OSC 99 ; i=build-42 : a=report ; Build failed ST"
+reply = "OSC 99 ; i=build-42 ; ST"
+notes = '''The reply arrives on the application's *input* stream when the user activates the notification, which is why ids are restricted to `[a-zA-Z0-9_-+.]` — an unsanitized id would be an injection into the application rather than into the terminal. With `p=buttons`, the reply carries the button number as its payload.'''
+
+# ---------------------------------------------------------------------------
+# Parameters. OSC 9 and OSC 777 have none at all; every key below is OSC 99's.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "p"
+applies_to = "OSC 99"
+default = "title"
+description = "Payload type: `title`, `body`, `close`, `icon`, `buttons`, `alive`, or `?` for the capability query. A notification with only one payload puts it in the title slot, which is why a body-only notification still uses `p=title`."
+
+[[param]]
+key = "i"
+applies_to = "OSC 99"
+default = ""
+description = "Notification id, from `[a-zA-Z0-9_-+.]`. Ties chunked escape codes together, lets a later notification replace this one, and is echoed back on activation. Something UUID-like is recommended."
+
+[[param]]
+key = "d"
+applies_to = "OSC 99"
+default = "1"
+description = "Done. `d=0` means more escape codes are coming and the notification is not yet complete; `d=1` displays it."
+
+[[param]]
+key = "e"
+applies_to = "OSC 99"
+default = "0"
+description = "`e=1` means the payload is RFC 4648 base64. The escape hatch for text that is not escape-code-safe UTF-8, and for text that would otherwise confuse the parser."
+
+[[param]]
+key = "u"
+applies_to = "OSC 99"
+default = ""
+description = "Urgency: `0` low, `1` normal, `2` critical. Unset leaves it to the terminal. The only expressible urgency in any of the three protocols."
+
+[[param]]
+key = "o"
+applies_to = "OSC 99"
+default = "always"
+description = "Occasion: `always`, `unfocused` (only when the window lacks keyboard focus), or `invisible` (only when it is also not visible). The polite way to avoid notifying someone who is already looking at you."
+
+[[param]]
+key = "a"
+applies_to = "OSC 99"
+default = "focus"
+description = "What activating the notification does: `focus` the window, `report` back to the application, or both, comma-separated. A leading `-` negates one."
+
+[[param]]
+key = "c"
+applies_to = "OSC 99"
+default = "0"
+description = "`c=1` asks the terminal to send an escape code when the notification is closed."
+
+[[param]]
+key = "w"
+applies_to = "OSC 99"
+default = "-1"
+description = "Auto-expiry in milliseconds. `-1` leaves it to the desktop, `0` means never expire."
+
+[[param]]
+key = "n"
+applies_to = "OSC 99"
+default = ""
+description = "Icon name, base64-encoded UTF-8. Well-known names include `error`, `warning`, `info`, `question`, `help`, `file-manager`, `system-monitor` and `text-editor`. Repeatable, best first."
+
+[[param]]
+key = "g"
+applies_to = "OSC 99"
+default = ""
+description = "Cache key for icon data sent with `p=icon`, so the same image can be reused later without re-transmitting it."
+
+[[param]]
+key = "f"
+applies_to = "OSC 99"
+default = ""
+description = "Application name, base64-encoded: a desktop file name on Linux, a bundle identifier on macOS."
+
+[[param]]
+key = "t"
+applies_to = "OSC 99"
+default = ""
+description = "Notification type, base64-encoded, so a user can filter or mute a whole category. Repeatable."
+
+[[param]]
+key = "s"
+applies_to = "OSC 99"
+default = "system"
+description = "Sound name, base64-encoded. `silent` for none."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "kitten notify"
+kind = "application"
+url = "https://sw.kovidgoyal.net/kitty/kittens/notify/"
+notes = "kitty's own command-line front end to OSC 99, including icons and buttons. The reference for what the protocol can do."
+
+[[user]]
+name = "foot"
+kind = "terminal"
+url = "https://codeberg.org/dnkl/foot"
+notes = "Implements all three, and routes them through a configurable command — `notify-send -a foot -i foot ${title} ${body}` by default."
+
+[[user]]
+name = "Contour"
+kind = "terminal"
+url = "https://contour-terminal.org"
+notes = "Implements all three, with a dedicated OSC 99 notification manager."
+
+[[user]]
+name = "mosh"
+kind = "application"
+url = "https://github.com/mobile-shell/mosh/pull/1144"
+notes = "Forwards OSC 9 and OSC 777 through the mosh session, so notifications survive a roaming connection."
+
+[[user]]
+name = "fish"
+kind = "application"
+url = "https://github.com/fish-shell/fish-shell/pull/2096"
+notes = "Notifies when a long-running command finishes, in VTE-based terminals."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough  multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# `status` is one value per terminal, but this feature is three protocols — so
+# every row says in `notes` which of the three it implements. `partial` here means
+# "implements some but not all of the three". The per-protocol table that
+# `escapade notification probe` resolves against lives in
+# src/features/notification/probe.rs and must be kept in step with these notes.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+since = "0.18.0 (2020-08)"
+notes = "**OSC 99** — the reference implementation, with icons, buttons, sounds, activation reports and the capability query — plus **OSC 9** for backwards compatibility. **OSC 777 is deliberately absent**: Kovid Goyal rejected it as \"a urxvt specific 'random command to terminal emulator for extension plugins' thing\"."
+source = "https://github.com/kovidgoyal/kitty/issues/1474"
+
+[[support]]
+terminal = "foot"
+status = "yes"
+since = "1.6.0 (2020-12) for OSC 777"
+notes = "All three: **OSC 9**, **OSC 777** and **OSC 99** with icon support (symbolic icon names only). Notifications go to a configurable command, `notify-send -a foot -i foot ${title} ${body}` by default. Only notifies while the window is **unfocused** — worth knowing before concluding it is broken."
+source = "https://codeberg.org/dnkl/foot/pulls/236"
+
+[[support]]
+terminal = "contour"
+status = "yes"
+notes = "All three: **OSC 9** (rendered as a body under the title `ConEmu`), **OSC 777**, and **OSC 99** through a dedicated notification manager. Its OSC 777 handler requires **exactly three** semicolon-separated fields and ignores the notification otherwise, so a semicolon in the body loses it."
+source = "https://github.com/contour-terminal/contour/blob/master/src/vtbackend/Screen.cpp"
+
+[[support]]
+terminal = "ghostty"
+status = "partial"
+notes = "**OSC 9** and **OSC 777**, both documented. **OSC 99 is requested but not documented as implemented.** Ghostty's own OSC 9 page warns against a title starting with a number followed by a semicolon, to avoid colliding with the ConEmu extensions — the clearest statement of that hazard anywhere."
+source = "https://ghostty.org/docs/vt/osc/9"
+
+[[support]]
+terminal = "wezterm"
+status = "partial"
+notes = "**OSC 9** (\"show a toast notification\") and **OSC 777 ; notify** (\"only the notify extension is supported\"). **OSC 99 does not appear** in WezTerm's escape sequence reference."
+source = "https://wezterm.org/escape-sequences.html"
+
+[[support]]
+terminal = "rio"
+status = "partial"
+notes = "**OSC 777 ; notify**, and **OSC 9** as a fallback when the payload is not a ConEmu progress report — in which case the notification gets an empty title. No OSC 99."
+source = "https://github.com/raphamorim/rio/blob/main/rio-vt/src/performer/handler.rs"
+
+[[support]]
+terminal = "iterm2"
+status = "partial"
+notes = "**OSC 9 only** — the sequence iTerm2 invented, predating the current maintainer. One field of text, no title, no icons, and a per-profile preference to turn it off. Accepts `BEL` or `ESC \\` as the terminator. `OSC 1337 ; RequestAttention=yes` is the related, non-notification way to get noticed."
+source = "https://iterm2.com/documentation-escape-codes.html"
+
+[[support]]
+terminal = "konsole"
+status = "partial"
+notes = "**OSC 777 only**, added so that applications already targeting kitty, foot and urxvt work unchanged. Routed through KDE's notification system."
+source = "https://invent.kde.org/utilities/konsole/-/merge_requests/761"
+
+[[support]]
+terminal = "windows-terminal"
+status = "flag"
+notes = "**OSC 777 ; notify** only, gated behind an optional feature so it is off unless the build enables it. Note that **OSC 9 in Windows Terminal is ConEmu's taskbar progress**, not a notification — that collision is the reason to prefer OSC 777 here."
+source = "https://github.com/microsoft/terminal/blob/main/src/terminal/adapter/adaptDispatch.cpp"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "no"
+notes = "Upstream VTE implements none of the three. **Fedora carries a downstream patch** adding `OSC 777 ; notify ; SUMMARY ; BODY`, so notifications work on Fedora and not on other distributions running the same version — the most confusing support situation of any terminal here."
+source = "https://src.fedoraproject.org/rpms/vte291"
+
+[[support]]
+terminal = "alacritty"
+status = "no"
+notes = "No notification protocol of any kind, consistent with Alacritty declining features it considers outside a terminal emulator's job."
+
+[[support]]
+terminal = "vscode"
+status = "unknown"
+notes = "Not properly verified. No notification OSC handler was found in the terminal platform code, and a marketplace extension exists to add one, which suggests it is not built in. Sending costs nothing, so `escapade` sends anyway."
+source = "https://marketplace.visualstudio.com/items?itemName=wenbopan.vscode-terminal-osc-notifier"
+
+[[support]]
+terminal = "xterm"
+status = "no"
+notes = "xterm has no desktop-notification sequence. `bellIsUrgent` sets the window's urgency hint on `BEL`, which is the closest it comes."
+
+[[support]]
+terminal = "tmux"
+status = "passthrough"
+notes = "All three are filtered by default. Needs `set -g allow-passthrough on` plus `DCS tmux;` wrapping with every inner `ESC` doubled, and the outer terminal must implement whichever protocol was wrapped. tmux's own `monitor-activity` and `bell-action` are the in-multiplexer alternative, and they notify inside tmux rather than on the desktop."
+
+[[support]]
+terminal = "zellij"
+status = "unknown"
+notes = "Passthrough behaviour for these sequences has not been verified."
+
+[[support]]
+terminal = "screen"
+status = "no"
+notes = "GNU Screen has no passthrough for OSC strings it does not recognise, so none of the three reach the outer terminal."
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "kitty desktop notifications — the OSC 99 specification"
+url = "https://sw.kovidgoyal.net/kitty/desktop-notifications/"
+
+[[resource]]
+title = "iTerm2 proprietary escape codes — where OSC 9 is documented"
+url = "https://iterm2.com/documentation-escape-codes.html"
+
+[[resource]]
+title = "Ghostty: Show Desktop Notification (OSC 9), with the ConEmu collision spelled out"
+url = "https://ghostty.org/docs/vt/osc/9"
+
+[[resource]]
+title = "WezTerm escape sequences — OSC 9 and OSC 777 side by side"
+url = "https://wezterm.org/escape-sequences.html"
+
+[[resource]]
+title = "foot: implementing urxvt's OSC 777;notify, with the original Perl extension quoted"
+url = "https://codeberg.org/dnkl/foot/pulls/236"
+
+[[resource]]
+title = "kitty issue 1474 — why kitty has OSC 9 and OSC 99 but not OSC 777"
+url = "https://github.com/kovidgoyal/kitty/issues/1474"
+
+[[resource]]
+title = "terminal-wg specifications issue 13 — the standardisation attempt that stalled"
+url = "https://gitlab.freedesktop.org/terminal-wg/specifications/-/issues/13"

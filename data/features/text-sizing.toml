@@ -1,0 +1,11 @@
+# PLACEHOLDER — being written. See glyph-protocol.toml for the full schema.
+
+id = "text-sizing"
+name = "Text sizing"
+tagline = "Draw text several cells tall that still selects and copies as the one line it really is."
+status = "experimental"
+transport = "OSC"
+
+summary = '''
+Placeholder. This feature file is being written.
+'''

@@ -1,0 +1,412 @@
+# Taskbar / tab progress reporting
+#
+# One file per terminal feature. Everything `escapade progress explain` prints
+# comes from here, so prose edits need no Rust changes.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslash
+#     sequences survive verbatim.
+#   * Write sequences symbolically: ESC, CSI, OSC, ST, BEL — never embed a real
+#     0x1b byte in this file. `escapade` prints these as text, and a literal
+#     control byte here would be executed by the reader's terminal instead.
+#   * One source line per paragraph. termimad re-wraps each source line on its
+#     own, so a hard-wrapped paragraph wraps twice and comes out ragged.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+#
+# This feature has no specification. ConEmu's documentation table is the closest
+# thing, every other implementation is a reimplementation of that table, and they
+# disagree in small ways that matter — so the notes below are unusually specific
+# about *which* implementation does what, and every claim was read out of source
+# or official documentation rather than inferred.
+
+id = "progress"
+name = "Progress reporting"
+tagline = "Tell the terminal how far along a long job is, so it can show it where the user is already looking — the taskbar, the dock, the tab."
+status = "de-facto-standard"
+author = "ConEmu (Maximus5)"
+transport = "OSC"
+spec_url = "https://conemu.github.io/en/AnsiEscapeCodes.html"
+
+summary = '''
+A long-running command can tell the terminal how far along it is, in one escape sequence, and the terminal renders it somewhere the user is *already looking*: the Windows taskbar button fills up, a tab header gains a progress ring, a pane border changes colour, a window icon gains a badge. The application draws nothing and never learns where it went.
+
+```
+OSC 9 ; 4 ; <state> ; <progress> ST
+```
+
+That is the entire protocol. `<state>` is one of five small integers, `<progress>` is a whole-number percentage:
+
+| state | means | percentage |
+|---|---|---|
+| `0` | remove the indicator | ignored |
+| `1` | set determinate progress | **required in practice**, 0–100 |
+| `2` | error — usually red | optional; meaning of "absent" varies |
+| `3` | indeterminate — busy, no total | ignored |
+| `4` | paused, or warning — usually yellow | optional; meaning of "absent" varies |
+
+It comes from ConEmu, and the reach is the surprising part: Windows Terminal 1.6, mintty 3.4.2, iTerm2, Ghostty 1.2, Rio, Konsole 26.04 and VTE 0.80 all implement it, WezTerm has it in nightly builds, and — unusually for an OSC extension — **tmux 3.7 parses it, exposes it as a format variable, and forwards it to the outer terminal**. Long builds are exactly what runs inside tmux, so that last one matters more than it sounds.
+
+Two things will bite you, and neither is subtle. **`OSC 9` on its own is iTerm2's desktop-notification sequence** — the two protocols share a number. And **VTE deliberately refuses a `BEL`-terminated progress report**, while Microsoft's own tutorial writes the sequence with `BEL`. Both are covered below.
+'''
+
+problem = '''
+The alternative is to draw the bar yourself, in the grid, with carriage returns — which is what every progress bar you have ever seen does, and it works fine until any of the following happens.
+
+* **You are not looking at the terminal.** That is the normal state of affairs during a long build. A bar in the grid is invisible from another window; a taskbar button is visible from across the desk.
+* **The output is not a terminal.** A bar written to a pipe or a log file is a stream of carriage returns and `[####    ]` noise. An escape sequence is discarded by anything that does not understand it, so a log gets none of it.
+* **Something else is drawing too.** Two libraries writing progress bars to the same line is a familiar mess. There is only one indicator, so the last writer simply wins, without corrupting anything.
+
+The real comparison is not with in-grid bars, though — it is with what a desktop application does. A GUI installer sets its taskbar progress through a platform API: `ITaskbarList3::SetProgressValue` on Windows, a dock tile on macOS, the Unity launcher API on Linux. A program running in a terminal cannot call any of those: it has no window of its own, and over ssh it is not even on the same machine as the window. This escape sequence is the terminal offering to make the call on your behalf, and it travels down the same stream as your output — which is why it is the only progress indicator that survives `ssh build-host 'make'`.
+'''
+
+how_it_works = '''
+It is an **OSC** — Operating System Command — string, the class of escape sequence used to talk to the terminal about things outside the grid:
+
+```
+OSC 9 ; 4 ; <state> ; <progress> ST
+```
+
+`OSC` is `ESC ]` and `ST` is the string terminator `ESC \`. The `9` is ConEmu's number; the `4` is a sub-command. ConEmu defined nine of them — sleep, a GUI message box, tab text, progress, wait for a keypress, run a macro, run a process, print an environment variable, report the working directory — and progress is the one anybody else implemented.
+
+**Terminate with `ST`, not `BEL`.** Every implementation accepts `ST`. VTE explicitly rejects `BEL` for this sequence, and says why in a source comment: *"while this is a conemu OSC, and conemu allows BEL termination, this is also just getting really adopted outside conemu. Let's treat this as a 'new' thing and not allow BEL termination here."* Microsoft's tutorial, iTerm2's own test scripts and most snippets in the wild use `BEL`, so `printf '\e]9;4;1;50\a'` is a very common line that does nothing at all on GNOME Terminal and everything else built on VTE.
+
+**A terminal that does not recognise the number discards the whole string.** That is not politeness, it is how OSC parsing is defined: the terminal consumes bytes up to the terminator and does nothing with them. Nothing is printed, no cell is touched, no mode is left set. So this is safe to emit unconditionally — which is just as well, because there is no way to ask whether it will work.
+
+**There is no query.** No sequence asks whether the terminal implements this, no reply is defined, and there is no side effect to observe, because the thing that moves is outside the grid. The one near-miss is VTE 0.82, which can be asked for a termprop by name — and which answers this particular question with an empty reply, the real answer being *"reserved for future extension"*. So `escapade progress probe` reports an inference and says so: it asks the terminal to name itself with XTVERSION (`CSI > q`) behind a Primary Device Attributes barrier (`CSI c`), so that silence can be told apart from slowness, and looks the answer up in the support matrix. It claims *yes* only when the terminal named itself **in band**, because an environment variable survives an `ssh` hop and a terminal does not — and it compares the version the terminal reported against the `since` column, because support here is version-gated nearly everywhere.
+
+**There is no "done", either.** The indicator holds whatever it was last told for as long as the terminal window exists. Sending state `0` when your program finishes is not tidiness, it is part of the protocol: nothing else takes the indicator down.
+'''
+
+payload = '''
+## The state field
+
+Five values. ConEmu's own table is the only prose specification this protocol has, so it is worth quoting exactly:
+
+```
+st = 0: remove progress.
+st = 1: set progress value to pr (number, 0-100).
+st = 2: set error state in progress on Windows 7 taskbar, pr is optional.
+st = 3: set indeterminate state.
+st = 4: set paused state, pr is optional.
+```
+
+Note what is *not* there: the familiar wording "state 3 ignores the percentage" is **Windows Terminal's** documentation, not ConEmu's. And ConEmu's own code contradicts its table in two places — `pr` is optional for state 1 as well, defaulting to 0, and there are two undocumented states, `5` and `6` ("long run start" and "long run stop"), which take a name rather than a number and which nothing else implements. Windows Terminal drops the sequence outright when the state exceeds 4, so treat 5 and 6 as unavailable rather than reserved.
+
+State `4` is the one whose *name* forked: ConEmu, tmux, VTE, Ghostty and WezTerm call it **paused**; Windows Terminal and iTerm2 call it **warning**. The rendering is the same yellow either way. `escapade` spells it `--state warning`.
+
+## The percentage field
+
+A whole number, 0 to 100. Not a fraction, not a ratio, no unit.
+
+Out-of-range values are where implementations stop agreeing, and the disagreement is worse than "unspecified": Windows Terminal and Ghostty clamp to 100, **tmux and VTE reject the entire sequence**, Konsole drops the update, and WezTerm clamps 150 to 100 but turns 300 into 0 because it parses into a byte first. So sending `150` does not mean "full" — on several of these it means "no update", which looks exactly like a hang. `escapade` therefore clamps to 100 itself and says on stderr that it did.
+
+"Optional" for states 2 and 4 is equally divergent, and this one is worth knowing before you rely on it:
+
+| | state 1 with no percentage | state 2 with no percentage | state 3 and a percentage |
+|---|---|---|---|
+| Windows Terminal | 0% | **keeps the last value** (floor 10) | ignored |
+| tmux 3.7 | keeps the last value | **keeps the last value** | never updates it |
+| Ghostty 1.2 | 0% | no value | ignored |
+| VTE 0.80 | 0% | **0%** | **forces it to 0** |
+| iTerm2 | ignored entirely | pulsing indeterminate error | ignored |
+| Konsole 26.04 | **nothing happens** | not implemented | hides the indicator |
+| WezTerm (nightly) | 0% | 0% | ignored |
+
+So omitting the percentage on an error is the only way to say "turn the bar I have red" — and it means "red at 0%" on VTE, and nothing at all on iTerm2 for state 4, which documents the percentage as required there. `escapade` omits the field for states 2 and 4 when you give it no percentage, and prints a note saying what that will and will not do. Pass one — `escapade progress 60 --state error` — when it matters.
+
+`escapade` has nothing to sanitize here, which is a pleasant novelty for an OSC string. The payload is built from a state enum and a percentage type that cannot hold anything outside 0–100, so every byte between the introducer and the terminator is a digit or a semicolon the builder wrote. There is no input — however hostile, however long — that could smuggle an `ESC` in and end the string early.
+
+## Driving it from a stream
+
+The interesting shape is not a single report, it is a pipeline:
+
+```sh
+cargo build 2>&1 | grep --line-buffered -o '[0-9]*%' | escapade progress --watch
+```
+
+Which means the input is a **build log**, not a protocol, so `--watch` is built for junk: blank lines are skipped, a trailing `%` is stripped, a decimal fraction is truncated, and a line that is not a number is ignored rather than mined for whatever digits it happens to contain — reading `1` out of `Compiling serde v1.0.229` would move the bar backwards. A bare `error`, `warning`, `busy` or `done` on a line of its own sets the matching state, so `{ make || echo error; } | escapade progress --watch` works. Nothing is redrawn when the value has not changed, and the indicator is always removed when the stream closes, however it closes.
+
+mintty deserves a mention here for skipping the pipeline entirely: it can *scan its own screen* for an `x%` token and drive the taskbar from that, with no escape sequences at all (the `ProgressBar` and `ProgressScan` options). No other terminal does anything like it.
+'''
+
+security = '''
+This is the least dangerous sequence in the collection, and it is worth being precise about why, because "escape sequences are dangerous" is a reasonable prior.
+
+**The payload cannot be injected.** Every other OSC feature carries user text — a title, a URL, a notification body — and a raw `ESC` inside that text would end the string early and leave the rest being read as a fresh escape sequence. Here the payload is a state number and a percentage. `escapade` represents them as an enum and a bounded integer, so a malformed sequence is not merely avoided, it is unrepresentable: no string ever reaches the builder.
+
+**It carries no information out.** There is no query and no reply, so this sequence cannot be used to read anything back — unlike the clipboard, the window title or a colour query, each of which the terminal answers on the application's *input* stream, and each of which has been an injection vector at some point. VTE's termprop query mechanism is the only route that could ever return a progress value, and it deliberately returns nothing today.
+
+**What it can do is lie, and annoy.** A program can put a red error bar on a taskbar while succeeding, or leave an indeterminate indicator pulsing forever. Both are nuisances rather than compromises, and both are indistinguishable from bugs. The realistic hazard is the accidental one: a program that sets progress and exits without sending state `0` leaves the indicator up, because nothing else will take it down. Put it in a trap:
+
+```sh
+trap 'escapade progress --clear' EXIT INT TERM
+```
+
+**The real trap is the OSC 9 collision**, which is a correctness problem rather than a security one, and which has its own entry below.
+'''
+
+caveats = '''
+* **`OSC 9` is two protocols.** `OSC 9 ; <text> ST` is iTerm2's desktop notification; `OSC 9 ; 4 ; <state> ; <progress> ST` is ConEmu's progress report. They are told apart only by what follows the first semicolon, and the resolution differs per terminal: **Windows Terminal, mintty, Konsole and tmux implement progress only** and silently drop an OSC 9 notification; **Ghostty, WezTerm, Rio, Contour and iTerm2 implement both** and gate on the leading field. iTerm2's rule is the strictest — *any* numeric leading field disqualifies the payload from being a notification, so `OSC 9 ; 42 ST` is discarded rather than shown. Ghostty's release notes put the trade-off plainly: "you can't send any notifications starting with `;4`". `escapade notification` guards that direction by prefixing a space to a message that begins with a digit and a semicolon.
+* **`BEL` termination is not portable.** VTE rejects it for this sequence on purpose. Since Microsoft's tutorial and most examples use `BEL`, this is the single most likely reason a progress report "does nothing" on a Linux desktop. Always use `ST`.
+* **Nothing takes the indicator down for you.** It is terminal state, like a mode or a window title, and it outlives your process. A script killed at 40% leaves a taskbar button at 40% until the window closes. `escapade progress --watch` clears on end of input; everything else needs a trap.
+* **Where it shows up is entirely the terminal's business.** A taskbar button, a tab header ring, a bar across the top of the window, a pane border, a themed icon, or a property that the embedding application may render and may not. There is no way to ask, and no way to find out whether anything was drawn.
+* **The error and warning colours may be invisible.** A terminal that renders progress as a percentage or a ring has nowhere to put "red", and Konsole has not implemented states 2 and 4 at all. Do not let the colour carry the meaning on its own.
+* **Out-of-range and absent values behave differently everywhere.** See the table under "The payload". The safe subset is: clamp to 0–100 yourself, always send a percentage with state 1, and send one with states 2 and 4 whenever you actually care where the bar sits.
+* **It cannot be detected.** No query, no reply, no acknowledgement, and support is version-gated nearly everywhere — Windows Terminal 1.6, mintty 3.4.2, Ghostty 1.2.0, Konsole 26.04, VTE 0.80, tmux 3.7 — so a name alone is not enough either. All that is left is identifying the terminal and consulting a table, which is inference and should be labelled as such. The saving grace is that guessing wrong costs nothing.
+* **tmux forwards it, which is unusual — with a catch.** tmux 3.7 re-emits the sequence to the outer terminal only when its terminal-features say the outer terminal has the new `progressbar` capability (`Spb`), and only for the active pane of the current window. Older tmux consumes and discards it, so there it needs `set -g allow-passthrough on` plus `DCS tmux;` wrapping with every inner `ESC` doubled. `escapade` sends the sequence unwrapped, because wrapping would be wrong on a tmux that forwards natively. One nuance does not survive the trip: tmux's re-emitted form always carries both parameters, so "percentage omitted" becomes "percentage 0" on the way out.
+* **VTE parses it and renders nothing itself.** VTE 0.80 turns the sequence into two termprops — `vte.progress.hint` (0–4) and `vte.progress.value` (0–100) — and leaves the drawing to whatever embeds the widget. GNOME Terminal does implement it, as a themed icon; another VTE application may do nothing at all. So "VTE supports it" and "your VTE-based terminal shows it" are different claims.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences. One per state, because that is how a reader thinks about it.
+# There is no reply anywhere in this protocol.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+verb = "st = 1"
+name = "set determinate progress"
+purpose = "Show a bar at a given percentage. The one state that needs a number."
+request = "OSC 9 ; 4 ; 1 ; 42 ST"
+reply = "(none — this protocol has no reply, ever)"
+notes = '''Send it again for each new value; there is no separate "begin" or "end". Clamp to 0–100 first: tmux and VTE reject an out-of-range sequence entirely rather than clamping it. Omitting the percentage is legal in ConEmu, Ghostty, VTE and WezTerm, where it means 0%, but Konsole does nothing at all and iTerm2 ignores the sequence — so always send one.'''
+
+[[sequence]]
+verb = "st = 0"
+name = "remove the indicator"
+purpose = "Take the indicator away. The only thing that does, and the one sequence an application must not forget."
+request = "OSC 9 ; 4 ; 0 ; 0 ST"
+notes = '''The percentage field is ignored; `0` is written because the four-field form is what implementations were built against. Nothing else removes the indicator — not exiting, not closing the pipe, not resetting the terminal's modes — so send this from a trap on `EXIT`, `INT` and `TERM`.'''
+
+[[sequence]]
+verb = "st = 2"
+name = "error"
+purpose = "Say the job failed, usually rendered as a red bar."
+request = "OSC 9 ; 4 ; 2 ST"
+notes = '''Three fields, not four: the percentage is documented as optional, and leaving it out is the only way to say "turn the bar I already have red" — Windows Terminal and tmux keep their current value, and Windows Terminal cannot tell an explicit `0` from an absent field. It is not portable, though: VTE reads the absent field as 0%, and iTerm2 shows a pulsing indeterminate error instead. Send `OSC 9 ; 4 ; 2 ; 60 ST` when the position matters. Konsole has not implemented this state.'''
+
+[[sequence]]
+verb = "st = 3"
+name = "indeterminate"
+purpose = "Say the work is under way with no known total."
+request = "OSC 9 ; 4 ; 3 ; 0 ST"
+notes = '''Rendered as a pulsing or marquee bar, or an animated spinner in a tab bar. ConEmu's table says nothing about the percentage here; Windows Terminal documents it as ignored, iTerm2 and Ghostty ignore it too, VTE forces the stored value to 0, and Konsole *hides* the indicator instead of pulsing it. There is no timeout: it pulses until something else is sent, which is another reason state `0` matters.'''
+
+[[sequence]]
+verb = "st = 4"
+name = "paused / warning"
+purpose = "Say the job is paused or wants attention, usually rendered yellow."
+request = "OSC 9 ; 4 ; 4 ST"
+notes = '''ConEmu, tmux, VTE, Ghostty and WezTerm call this "paused"; Windows Terminal and iTerm2 call it "warning". Same yellow either way. The percentage is optional as with the error state — except in iTerm2, which documents it as required for this state and does nothing whatsoever without one, so pass a percentage if you want this to work everywhere. Useful for a build waiting on a passphrase or a confirmation.'''
+
+# ---------------------------------------------------------------------------
+# Parameters. There are two, and both are integers.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "state"
+applies_to = "OSC 9 ; 4"
+default = ""
+description = "`0` remove, `1` set, `2` error, `3` indeterminate, `4` paused or warning. Required. ConEmu's source has undocumented states `5` and `6` (\"long run start\" and \"long run stop\") which take a name rather than a number; nothing else implements them, and Windows Terminal drops any sequence whose state exceeds 4, so treat them as unavailable rather than reserved."
+
+[[param]]
+key = "progress"
+applies_to = "OSC 9 ; 4"
+default = "0"
+description = "A whole-number percentage, 0–100. Required in practice for state `1`, ignored for states `0` and `3`, and optional for states `2` and `4` — where what \"absent\" means depends on the terminal. Values above 100 are clamped by some implementations and cause others to reject the whole sequence, so clamp before sending."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "ConEmu"
+kind = "terminal"
+url = "https://conemu.github.io/en/AnsiEscapeCodes.html"
+notes = "Where the sequence comes from, and still the only prose description of it. Every other implementation is a reimplementation of that one documentation table — including its ambiguities."
+
+[[user]]
+name = "Windows Terminal"
+kind = "terminal"
+url = "https://learn.microsoft.com/en-us/windows/terminal/tutorials/progress-bar-sequences"
+notes = "Wires the sequence onto the Windows taskbar API and a tab-header progress ring, and publishes the only step-by-step tutorial for it — which is also where the habit of terminating it with BEL comes from."
+
+[[user]]
+name = "tmux"
+kind = "multiplexer"
+url = "https://github.com/tmux/tmux/blob/master/CHANGES"
+notes = "Parses it, exposes it to the status line as `pane_pb_state` and `pane_pb_progress`, and forwards it to the outer terminal through a new terminfo capability. Unusual: tmux drops most OSC extensions it does not implement itself."
+
+[[user]]
+name = "VTE"
+kind = "library"
+url = "https://github.com/GNOME/vte/blob/master/src/vte/vteglobals.h"
+notes = "Turns it into the `vte.progress.hint` and `vte.progress.value` termprops and renders nothing, leaving that to the application that embeds the widget — GNOME Terminal draws a themed icon from them."
+
+[[user]]
+name = "mintty"
+kind = "terminal"
+url = "https://github.com/mintty/mintty/wiki/CtrlSeqs"
+notes = "Accepts the ConEmu form, adds mnemonic spellings (`OSC 9 ; progress ; red`), has a native `CSI %q` of its own, and can scan its own screen for an `x%` token and drive the taskbar with no escape sequences at all."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough multiplexer: forwards it only when configured to
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# Support here is version-gated almost everywhere, so `since` is not decoration:
+# `escapade progress probe` compares it against the version the terminal reports
+# for itself in its XTVERSION reply, and says "no" to a build that predates it.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "conemu"
+status = "yes"
+notes = "The original, and the only documentation. Its implementation diverges from its own table in two ways worth knowing: the percentage is optional for state `1` too (defaulting to 0), and states `5` and `6` exist in the source as unimplemented \"long run\" markers that take a name rather than a number."
+source = "https://conemu.github.io/en/AnsiEscapeCodes.html"
+
+[[support]]
+terminal = "windows-terminal"
+status = "yes"
+since = "1.6"
+notes = "All five states, on the taskbar button and as a tab-header ring. The most carefully specified implementation: a percentage above 100 is clamped, a state above 4 drops the sequence, state `0` resets the value to 0, and states `2` and `4` with no percentage **keep the previous value** (with a floor of 10 if there was none). Note that **`OSC 9` here is this sequence and nothing else** — an iTerm2-style notification is silently discarded."
+source = "https://learn.microsoft.com/en-us/windows/terminal/tutorials/progress-bar-sequences"
+
+[[support]]
+terminal = "iterm2"
+status = "yes"
+notes = "Both halves of the collision, with the strictest disambiguation of any terminal: **any** numeric leading field means the payload is not a notification, so `OSC 9 ; 42 ST` is dropped rather than shown. Its progress semantics are its own — the percentage is documented as required for states `1` and `4`, state `4` without one does nothing at all, and state `2` without one shows a pulsing indeterminate error."
+source = "https://iterm2.com/documentation-escape-codes.html"
+
+[[support]]
+terminal = "mintty"
+status = "yes"
+since = "3.4.2"
+notes = "Added 2020-11-04 as \"progress bar control sequences CSI %q or OSC 9;4 (experimental)\". Maps ConEmu's states onto its own colour model (error to red, paused to yellow, indeterminate to busy) and accepts mnemonic parameters as well as numbers. Its OSC 9 is progress-only: an iTerm2-style notification is dropped."
+source = "https://github.com/mintty/mintty/blob/master/wiki/Changelog.md"
+
+[[support]]
+terminal = "ghostty"
+status = "yes"
+since = "1.2.0"
+notes = "Renders a bar across the top of the terminal, with tab headers and dock icons named as future work. Supports both halves of the collision and resolves it by decree: `OSC 9 ; 4` is always progress, so a notification cannot begin with `;4`. Turned off with `progress-style = false`."
+source = "https://ghostty.org/docs/install/release-notes/1-2-0"
+
+[[support]]
+terminal = "rio"
+status = "yes"
+since = "0.3.0"
+notes = "Handles `OSC 9 ; 4` as progress and falls back to treating any other OSC 9 payload as a desktop notification — the clean resolution of the collision, and the reason Rio needs no warning about message text beginning with a digit."
+source = "https://github.com/raphamorim/rio/releases/tag/v0.3.0"
+
+[[support]]
+terminal = "tmux"
+status = "yes"
+since = "3.7"
+notes = "**Parses it, publishes it, and forwards it**, which almost no OSC extension gets: `pane_pb_state` and `pane_pb_progress` are format variables for the status line, and the sequence is re-emitted to the outer terminal through a new `progressbar` terminal feature (capability `Spb`) for the active pane. Two caveats: forwarding happens only when tmux believes the outer terminal has that capability, and the re-emitted form always carries both parameters, so \"percentage omitted\" becomes \"percentage 0\". Before 3.7 the sequence is consumed and discarded, needing `allow-passthrough` and `DCS tmux;` wrapping instead."
+source = "https://github.com/tmux/tmux/blob/master/CHANGES"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "partial"
+since = "VTE 0.80"
+notes = "VTE parses the sequence into the `vte.progress.hint` and `vte.progress.value` termprops and renders nothing itself; GNOME Terminal draws them as a themed window icon. Two gaps: **`BEL` termination is rejected on purpose**, so the common `printf` snippet does nothing here, and VTE's own semantics differ — state `3` forces the value to 0, and states `2` and `4` read an absent percentage as 0% rather than keeping the last value."
+source = "https://github.com/GNOME/vte/blob/master/src/vte/vteglobals.h"
+
+[[support]]
+terminal = "konsole"
+status = "partial"
+since = "26.04"
+notes = "Genuinely partial, and the commit says which parts: \"the error, indeterminate, and paused states are not implemented yet\". State `1` works only with an in-range percentage — no percentage and out-of-range values do nothing rather than clamping — state `3` *hides* the indicator instead of pulsing, and states `2` and `4` are no-ops. Shown on the tab bar, in the tab's colour."
+source = "https://github.com/KDE/konsole/commit/da7a68a19714f16d69e4573de15a080e22ba9185"
+
+[[support]]
+terminal = "wezterm"
+status = "partial"
+notes = "Parses all five states and exposes them to Lua as `pane:get_progress()`, with an animated spinner in the tab bar for the indeterminate state — but **only in nightly builds; this has never appeared in a tagged release**, and the documentation still lists state `4` as unsupported even though the parser handles it. A percentage above 255 becomes 0 rather than clamping, because it is parsed into a byte first."
+source = "https://github.com/wezterm/wezterm/blob/main/docs/config/lua/pane/get_progress.md"
+
+[[support]]
+terminal = "contour"
+status = "no"
+notes = "Parses the sequence, recognises it as progress, and deliberately does nothing with it — the source comment reads \"currently, we silently accept it\" with a TODO to expose it to the GUI. So nothing is displayed, but nothing is misread as a notification either."
+source = "https://github.com/contour-terminal/contour/blob/master/src/vtbackend/Screen.cpp"
+
+[[support]]
+terminal = "kitty"
+status = "no"
+notes = "kitty implements `OSC 9` as a desktop notification, for compatibility with iTerm2, and has no progress handler. A progress report sent here is a notification's worth of text as far as kitty is concerned."
+source = "https://sw.kovidgoyal.net/kitty/desktop-notifications/"
+
+[[support]]
+terminal = "alacritty"
+status = "no"
+notes = "No progress sequence, consistent with Alacritty declining features it considers outside a terminal emulator's job."
+
+[[support]]
+terminal = "xterm"
+status = "no"
+notes = "xterm has no progress sequence. Its window-manager urgency hint on `BEL` is the closest analogue, and it carries no value."
+
+[[support]]
+terminal = "screen"
+status = "no"
+notes = "GNU Screen consumes OSC strings it does not recognise and has no passthrough for them, so the sequence never reaches the outer terminal."
+
+[[support]]
+terminal = "foot"
+status = "unknown"
+notes = "Not verified. foot implements the notification sequences, but no progress handler was found, and Wayland gives it nowhere obvious to put a taskbar indicator."
+
+[[support]]
+terminal = "vscode"
+status = "unknown"
+notes = "Not properly verified. The integrated terminal has its own progress UI, driven by shell integration rather than by this sequence."
+
+[[support]]
+terminal = "zellij"
+status = "unknown"
+notes = "Forwarding behaviour for this sequence has not been verified."
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "ConEmu ANSI escape codes — the original definition of OSC 9 ; 4"
+url = "https://conemu.github.io/en/AnsiEscapeCodes.html"
+
+[[resource]]
+title = "Windows Terminal — the only tutorial anybody wrote for this sequence"
+url = "https://learn.microsoft.com/en-us/windows/terminal/tutorials/progress-bar-sequences"
+
+[[resource]]
+title = "microsoft/terminal#7718 — \"iTerm2's OSC 9 conflicts with ConEmu\", the clearest statement of the collision"
+url = "https://github.com/microsoft/terminal/issues/7718"
+
+[[resource]]
+title = "ghostty-org/ghostty#3125 — deciding that OSC 9 ; 4 can never be a notification"
+url = "https://github.com/ghostty-org/ghostty/issues/3125"
+
+[[resource]]
+title = "Ghostty 1.2.0 release notes — the collision, and the trade-off it forces"
+url = "https://ghostty.org/docs/install/release-notes/1-2-0"
+
+[[resource]]
+title = "mintty control sequences — the ConEmu form plus mnemonic parameters"
+url = "https://github.com/mintty/mintty/wiki/CtrlSeqs"
+
+[[resource]]
+title = "VTE vteglobals.h — the progress termprops, and why BEL is refused"
+url = "https://github.com/GNOME/vte/blob/master/src/vte/vteglobals.h"
+
+[[resource]]
+title = "tmux CHANGES — parsing, format variables and forwarding, all in 3.7"
+url = "https://github.com/tmux/tmux/blob/master/CHANGES"
+
+[[resource]]
+title = "Konsole commit da7a68a1 — \"the error, indeterminate, and paused states are not implemented yet\""
+url = "https://github.com/KDE/konsole/commit/da7a68a19714f16d69e4573de15a080e22ba9185"

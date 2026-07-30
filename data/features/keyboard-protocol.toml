@@ -1,0 +1,11 @@
+# PLACEHOLDER — being written. See glyph-protocol.toml for the full schema.
+
+id = "keyboard-protocol"
+name = "Keyboard protocol"
+tagline = "Tell Shift+Enter from Enter, see key releases, and know which physical key was pressed."
+status = "de-facto-standard"
+transport = "CSI"
+
+summary = '''
+Placeholder. This feature file is being written.
+'''

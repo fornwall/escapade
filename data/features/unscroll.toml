@@ -1,0 +1,296 @@
+# Unscrolling
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * TOML literal strings (three single quotes) for prose, so backslash
+#     sequences survive verbatim.
+#   * Sequences written symbolically: CSI, ESC, ST — never a real 0x1b byte.
+#   * One source line per paragraph: termimad re-wraps each source line on its
+#     own, so a pre-wrapped paragraph wraps twice and reads ragged.
+#   * Every `[[support]]` row carries a `source`.
+#
+# Every claim in this file was checked against a primary source: kitty's
+# specification page, and then the C, C++, Zig, Rust and Python that implements
+# or declines to implement it. Where the specification is silent, the
+# implementation is cited instead and named as such.
+
+id = "unscroll"
+name = "Unscroll"
+tagline = "Pull lines back down out of the scrollback buffer, refilling a screen that something scrolled away."
+status = "experimental"
+author = "Kovid Goyal"
+introduced = "2021-04"
+transport = "CSI"
+spec_url = "https://sw.kovidgoyal.net/kitty/unscroll/"
+
+summary = '''
+There is a particular annoyance that almost nobody has a name for. You are reading something on screen, you run one more command, and the thing you were reading is *gone* — pushed off the top by a burst of output, or wiped by a program that cleared the screen and printed three lines. It is not lost: it is sitting in the scrollback buffer, one flick of the wheel above the top row. But your shell is drawing a prompt at row 4 of a screen that is otherwise empty, and to get your context back you have to scroll up, read, and scroll down again — by hand, with the mouse, in a session you were driving from the keyboard.
+
+Unscrolling is the terminal-side fix. `CSI Ps + T` asks the terminal to push the screen down by `Ps` lines and fill the gap at the top **from the scrollback buffer** rather than with blanks. The lines you lost come back down onto the screen, in place, and the prompt slides down to make room for them. One escape sequence, no round trip, no reply.
+
+The sequence is a two-character extension of something very old. `SD` — Scroll Down, or Pan Up, from the VT420 — is `CSI Ps T`, and it already scrolls the screen down by `Ps` lines; it just fills the new rows at the top with blanks. Unscroll is `SD` with a `+` glued on before the final byte, and that single change from "fill with nothing" to "fill from history" is the entire protocol.
+'''
+
+problem = '''
+The alternative is not another escape sequence, it is the mouse. Scrollback is a viewport the *user* moves, and there has never been a way for an application to move it: no escape sequence scrolls the viewport, and there is a good reason for that, since an application that could scroll your view could also scroll something out of it. Unscroll sidesteps the objection entirely by not moving the viewport. It moves the *text*, promoting scrollback lines back into the live screen where they become ordinary content again.
+
+That distinction is why the feature is safe enough to be worth having, and also why it is limited. Nothing is revealed that was not on your screen a moment ago, and nothing is hidden — but the lines really do move, which makes unscrolling a destructive operation rather than a change of view. See the caveats.
+
+kitty's `kitten @ scroll-window` remote-control command exposes the same operation with a `u` unit — `kitten @ scroll-window 3u` unscrolls three lines — which is the only prior art for driving this from a script, and it works only in kitty.
+'''
+
+how_it_works = '''
+```
+CSI Ps + T
+```
+
+`Ps` is a line count. There is nothing else: no verbs, no named parameters, no reply, no acknowledgement, and no query for whether the terminal implements it. Unscroll is write-only, and a terminal that has never heard of it discards the sequence — which is what makes it safe to send optimistically and impossible to detect directly.
+
+**The default is one line.** The specification defines the syntax as identical to `SD`, and `SD`'s parameter defaults to 1 — xterm's `ctlseqs` documents it as "Scroll down Ps lines (default = 1) (SD), VT420" — and all three implementations agree, defaulting an absent parameter to 1. One line is a correct default and a useless one, which is why `escapade unscroll` sends a screenful instead; see the caveats.
+
+**Asking for more lines than the scrollback holds is not an error.** From the specification: "If the scrollback buffer is empty or there is no scrollback buffer … then the newly inserted lines must be empty, just as with the original `SD` escape code." You get as many real lines as exist and blanks for the rest, and there is no way to find out how many you got.
+
+**How many lines you may ask for is implementation defined**, with a floor: "must be at least one screen worth". The three implementations sit on both sides of that floor. mintty clamps to the height of the scrolling region and contour clamps to the page height, while kitty clamps to the *greater* of the screen height and the number of lines in scrollback — so a request for 500 lines pulls 500 in kitty and one screenful in the other two. One screenful is the largest request that means the same thing everywhere.
+
+**The cursor does not move.** `SD` leaves it where it was and so does this: the first line of commentary in kitty's implementation is "Scroll the screen down by count lines, not moving the cursor". The consequence is worth thinking about before sending it, because the cursor keeps its row *number* while the text under it slides away — the prompt visually descends by `Ps` rows while the cursor stays put, now sitting on top of restored history. In practice this belongs in a keybinding or a shell hook that redraws the prompt afterwards, not in the middle of a program tracking its own cursor position.
+
+The `+` is an intermediate byte, and choosing one is what makes the extension well-formed rather than a private hack: ECMA-48 allows it, and nothing else uses `+` with a final byte of `T`. It also dodges a real collision, since bare `CSI Ps T` with five parameters is xterm's Initiate Highlight Mouse Tracking — which is why mintty guards its plain `SD` with a parameter-count check and needs no such guard for the `+` form.
+'''
+
+caveats = '''
+**It does nothing useful on the alternate screen, and that breaks the use case everyone reaches for first.** The full-screen programs — `less`, `man`, `git log`, `htop`, your editor — run on the alternate screen, and the alternate screen has no scrollback buffer. The specification is explicit that this is one of the cases where the inserted lines "must be empty", and kitty's implementation drops the fill-from-scrollback flag outright when the active buffer is not the main one, degrading the sequence to a plain `SD` that pushes blank rows in from the top. Unscrolling inside a pager inserts blank lines.
+
+**Unscrolling after a pager exits does not recover the pager's content either**, for a second and more fundamental reason: output written to the alternate screen never enters the scrollback buffer at all. When `less` quits it restores the primary screen exactly as it was — same text, same cursor — so there is usually no hole to fill, and what unscroll pulls down is the history from *before* you ran `less`, not anything `less` displayed. If you want a pager's output kept, the fix is at the other end: tell it not to use the alternate screen (`less -X`, or `LESS=-X` for `git log`), so its output lands on the primary screen and enters scrollback like everything else.
+
+**What it is genuinely for** is the primary screen, and kitty's own motivation is the clearest case: you press Tab, the shell prints twenty lines of completions below the prompt, the top of your screen scrolls away, and when the completions are erased the text they displaced does not come back. Unscroll brings it back. The same applies to any command that clears the primary screen and prints a few lines, or that dumps a screenful of output over the top of something you were reading.
+
+**It is destructive at the bottom.** Scrollback catches lines that fall off the *top* of the screen; nothing catches lines pushed off the *bottom*. Unscrolling `Ps` lines discards the bottom `Ps` rows of the current screen permanently — in kitty, by rotating the grid and overwriting the row that wrapped around with the popped history line. So unscrolling is not undoable: there is no "rescroll", and while the lines it pulls down do become ordinary screen content that later output will scroll off the top into history again, the rows it pushed off the bottom are gone.
+
+**It consumes scrollback rather than copying it.** The lines are moved, not duplicated: kitty pops each one off the history buffer, so scrollback shortens by exactly the number of lines that arrived on screen. Unscrolling twice walks further back rather than showing the same lines again.
+
+**Do not send `Ps = 0`.** The three implementations disagree about what it means: kitty and contour take a present-but-zero parameter literally and scroll nothing, while mintty folds zero into the default of 1 and scrolls one line. Omit the parameter if you want the default and send an explicit count otherwise. `escapade unscroll 0` sends nothing at all rather than picking a side.
+
+**A multiplexer owns the scrollback, and none of them implement this.** Inside tmux the history buffer belongs to tmux rather than to the terminal underneath, so even a perfect passthrough would be asking the wrong process. tmux also does not implement it: its CSI table is keyed on the final byte together with its intermediates and contains no `+` entry, so the sequence is dropped.
+
+**There is no way to detect support.** No query, no reply, and no observable side effect an application can read back — a terminal that unscrolled and a terminal that discarded the sequence are indistinguishable from the sending end. `escapade unscroll probe` therefore infers rather than measures: it asks the terminal to name itself with XTVERSION, behind a device-attributes barrier, and looks the answer up in the matrix below. It claims a `yes` only when the terminal named itself in band, and reports `unknown` — never `no` — when all it has is an environment variable.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequence, and the one it extends.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+name = "Unscroll"
+purpose = "Scroll the screen down by Ps lines, filling the new rows at the top from the scrollback buffer."
+request = "CSI Ps + T"
+notes = '''`Ps` defaults to 1 when omitted. The maximum is implementation defined but is at least one screenful; ask for more and you get either more (kitty) or exactly one screenful (mintty, contour). Ask for more lines than the scrollback holds and the remainder arrive blank. The cursor does not move, and the rows pushed off the bottom of the screen are discarded rather than saved to history.'''
+
+[[sequence]]
+name = "Scroll Down (SD)"
+purpose = "The VT420 sequence this extends: the same downward scroll, but the new rows at the top are blank."
+request = "CSI Ps T"
+notes = '''Documented in the VT510 manual as "Pan Up", with a default of 1. This is what a terminal that does not implement the extension does if the `+` is dropped, and it is also what the extension degrades to on the alternate screen. Note that bare `CSI Ps T` with five parameters is xterm's Initiate Highlight Mouse Tracking instead — a collision the `+` form has no part in.'''
+
+# ---------------------------------------------------------------------------
+# Parameters.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "Ps"
+applies_to = "the only sequence"
+default = "1"
+description = "How many lines to pull down. Every implementation accepts at least one screenful; kitty accepts up to the whole scrollback. A present-but-zero value is read inconsistently and is best avoided."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "kitty"
+kind = "terminal"
+url = "https://sw.kovidgoyal.net/kitty/unscroll/"
+notes = "Designed it, documented it and shipped it in 0.20.2. Also exposes it through remote control as a unit of `kitten @ scroll-window`, where `3u` unscrolls three lines."
+
+[[user]]
+name = "mintty"
+kind = "terminal"
+url = "https://github.com/mintty/mintty/releases/tag/3.5.2"
+notes = "The second implementation, credited on kitty's specification page. Its own reference describes it as scrolling down like SD but filling the empty lines from the end of the scrollback buffer."
+
+[[user]]
+name = "contour"
+kind = "terminal"
+url = "https://github.com/contour-terminal/contour"
+notes = "Implements it as a function named UNSCROLL, commented \"Scroll Down with Scrollback Fill (kitty unscroll)\". Not listed on kitty's page, so this row comes from reading contour's source."
+
+[[user]]
+name = "terminal-wg"
+kind = "specification"
+url = "https://gitlab.freedesktop.org/terminal-wg/specifications/-/issues/30"
+notes = "The cross-terminal discussion the design came out of, linked from the specification itself."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough  multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# Every `no` below was read out of that terminal's own parser: either its CSI
+# dispatch accepts a bare `T` and nothing else, or it recognises the `+` form and
+# deliberately ignores it. Rows nobody has checked say `unknown` rather than
+# guessing from a family resemblance.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+since = "0.20.2 (2021-04-28)"
+notes = "The original. Clamps a request to the greater of the screen height and the scrollback line count, so it is the one implementation that will pull down more than a screenful. Pops lines off the history buffer, so scrollback shortens as the screen fills."
+source = "https://sw.kovidgoyal.net/kitty/unscroll/"
+
+[[support]]
+terminal = "mintty"
+status = "yes"
+since = "3.5.2"
+notes = "Clamps to the height of the scrolling region, so it never pulls down more than one screenful. Reads a present-but-zero parameter as 1 rather than as zero."
+source = "https://github.com/mintty/mintty/blob/master/src/termout.c"
+
+[[support]]
+terminal = "contour"
+status = "yes"
+notes = "Declared as a CSI with a `+` intermediate and a final `T`, taking zero or one parameter defaulting to 1. Clamps to the page height, then fills whatever the history could not supply with blanks. The release it arrived in is not recorded here — check contour's changelog and pin this down."
+source = "https://github.com/contour-terminal/contour/blob/master/src/vtbackend/Functions.h"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "no"
+notes = "VTE knows the sequence and refuses it on purpose: its generated parser table has an entry for a `T` final byte with a `+` intermediate, named MINTTY_SD and flagged as a no-op. That is a decision rather than an oversight, and it applies to every VTE-based terminal."
+source = "https://github.com/GNOME/vte/blob/master/src/parser-seq.py"
+
+[[support]]
+terminal = "ghostty"
+status = "no"
+notes = "Handles `T` only with an empty intermediate list; anything else is logged as \"ignoring unimplemented CSI T with intermediates\"."
+source = "https://github.com/ghostty-org/ghostty/blob/main/src/terminal/stream.zig"
+
+[[support]]
+terminal = "wezterm"
+status = "no"
+notes = "Its CSI parser reaches `T` in a branch keyed on the final byte alone and then parses the parameters as integers, so an intermediate `+` makes the whole sequence fail to parse and be discarded."
+source = "https://github.com/wezterm/wezterm/blob/main/wezterm-escape-parser/src/csi.rs"
+
+[[support]]
+terminal = "alacritty"
+status = "no"
+notes = "Matches the pattern `('T', [])` — final byte `T` with no intermediates — and logs anything else as an unhandled CSI."
+source = "https://github.com/alacritty/vte/blob/master/src/ansi.rs"
+
+[[support]]
+terminal = "foot"
+status = "no"
+notes = "Its `case 'T'` implements plain reverse scrolling, clamped to the scroll region, and there is no intermediate handling anywhere in the CSI dispatcher."
+source = "https://codeberg.org/dnkl/foot/src/branch/master/csi.c"
+
+[[support]]
+terminal = "xterm"
+status = "no"
+notes = "`ctlseqs` documents `CSI Ps T` as \"Scroll down Ps lines (default = 1) (SD), VT420\" and lists no `+ T` form — though it is xterm's documentation of SD's default that the extension inherits."
+source = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[support]]
+terminal = "konsole"
+status = "no"
+notes = "Dispatches `T` through its parameterised-CSI token, which carries no intermediate byte, straight to a plain scrollDown."
+source = "https://github.com/KDE/konsole/blob/master/src/Vt102Emulation.cpp"
+
+[[support]]
+terminal = "windows-terminal"
+status = "no"
+notes = "Its action table maps the bare final byte `T` to SD_ScrollDown, and there is no entry carrying a `+` intermediate."
+source = "https://github.com/microsoft/terminal/blob/main/src/terminal/parser/OutputStateMachineEngine.cpp"
+
+[[support]]
+terminal = "vscode"
+status = "no"
+notes = "xterm.js registers its scroll-down handler for the final byte `T` with no intermediates."
+source = "https://github.com/xtermjs/xterm.js/blob/master/src/common/InputHandler.ts"
+
+[[support]]
+terminal = "st"
+status = "no"
+notes = "st's CSI handler dispatches on the final byte, and the source contains no intermediate `+` handling at all."
+source = "https://git.suckless.org/st/file/st.c.html"
+
+[[support]]
+terminal = "rio"
+status = "unknown"
+notes = "Nobody has read rio's parser for this. Its escape-sequence handling derives from the same lineage as Alacritty's, which does not implement it, but that is a family resemblance and not a citation. The link is where to look."
+source = "https://github.com/raphamorim/rio"
+
+[[support]]
+terminal = "iterm2"
+status = "unknown"
+notes = "Nobody has checked. iTerm2 documents its own escape sequences and is closed source, so the link is where to look rather than where this was checked."
+source = "https://iterm2.com/documentation-escape-codes.html"
+
+[[support]]
+terminal = "conemu"
+status = "unknown"
+notes = "Nobody has checked. The link is ConEmu's own sequence reference, which is where to look."
+source = "https://conemu.github.io/en/AnsiEscapeCodes.html"
+
+[[support]]
+terminal = "warp"
+status = "unknown"
+notes = "Nobody has checked, and Warp is closed source with no published sequence reference, so there may be nothing to check against."
+source = "https://www.warp.dev/"
+
+[[support]]
+terminal = "wayst"
+status = "unknown"
+notes = "Nobody has checked. The link is the source repository, which is where to look."
+source = "https://github.com/91861/wayst"
+
+[[support]]
+terminal = "tmux"
+status = "no"
+notes = "Two reasons, and the first is the interesting one: inside tmux the scrollback belongs to tmux rather than to the terminal underneath, so forwarding the sequence would ask the wrong process. It also does not implement it — its CSI table is keyed on the final byte together with its intermediates and has no `+` entry, so the sequence is dropped."
+source = "https://github.com/tmux/tmux/blob/master/input.c"
+
+[[support]]
+terminal = "zellij"
+status = "unknown"
+notes = "Nobody has checked, and the same objection as tmux applies whatever the answer: the multiplexer holds the scrollback, so it would have to implement this itself. The link is where to look."
+source = "https://github.com/zellij-org/zellij"
+
+[[support]]
+terminal = "screen"
+status = "unknown"
+notes = "Nobody has checked, and the same objection as tmux applies whatever the answer: the multiplexer holds the scrollback, so it would have to implement this itself. The link is where to look."
+source = "https://savannah.gnu.org/projects/screen"
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "Unscrolling the screen — the specification"
+url = "https://sw.kovidgoyal.net/kitty/unscroll/"
+
+[[resource]]
+title = "terminal-wg issue 30 — the discussion the design came out of"
+url = "https://gitlab.freedesktop.org/terminal-wg/specifications/-/issues/30"
+
+[[resource]]
+title = "SD (Pan Up) in the VT510 manual — the sequence this extends"
+url = "https://vt100.net/docs/vt510-rm/SD.html"
+
+[[resource]]
+title = "mintty's control-sequence reference, which documents its own support"
+url = "https://github.com/mintty/mintty/wiki/CtrlSeqs"
+
+[[resource]]
+title = "kitty 0.20.2 changelog, where it was announced"
+url = "https://sw.kovidgoyal.net/kitty/changelog/"

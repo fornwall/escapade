@@ -1,0 +1,435 @@
+# Grapheme clustering — DEC private mode 2027
+#
+# Conventions (see glyph-protocol.toml, and ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslashes
+#     sequences survive verbatim.
+#   * Write sequences symbolically: ESC, CSI, ST, BEL — never embed a real
+#     0x1b byte in this file. `escapade` prints these as text, and a literal
+#     control byte here would be executed by the reader's terminal instead.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+
+id = "grapheme-clustering"
+name = "Grapheme clustering"
+tagline = "Make the terminal advance the cursor by what a user calls a character, not by codepoint."
+status = "experimental"
+author = "Christian Parpart and the Contour / terminal-wg Terminal Unicode Core effort"
+introduced = "2023-05"
+transport = "CSI"
+spec_url = "https://github.com/contour-terminal/terminal-unicode-core"
+# The specification's own Changelog.md still reads "0.1.0 (unreleased) — initial
+# draft". Several terminals implemented it in that state; the version below is
+# the draft's, not a release. Re-check when updating this file.
+spec_version = "0.1.0-draft"
+
+summary = '''
+A terminal is a grid of cells, and the only thing keeping an application's idea of that grid in step with the terminal's is that both count the same number of cells for the same bytes. There is no protocol for it. It is a shared assumption, and for multi-codepoint characters the assumption is wrong.
+
+`wcwidth` measures one codepoint at a time. A **grapheme cluster** — what a user calls one character — is often several. The farmer emoji is `U+1F9D1 U+200D U+1F33E`, and `wcwidth` reports 2, 0 and 2 for its three parts: four cells for something the font draws in two. From that point on, every column the application computed is two off.
+
+**DEC private mode 2027** asks the terminal to stop doing that: segment incoming text into grapheme clusters by the rules of *UAX #29, Unicode Text Segmentation*, and advance the cursor once per cluster. One sequence to set it, one to reset it, and DECRQM to ask which it is:
+
+```
+CSI ? 2027 h     grapheme clustering on
+CSI ? 2027 l     off — undefined, as it has always been
+CSI ? 2027 $ p   which is it?
+```
+
+The mode is opt-in by design. Everything about a terminal's behaviour *without* it stays exactly as undefined as it was, so nothing that works today breaks.
+'''
+
+problem = '''
+The obvious answer is "use a correct `wcwidth`", and it does not work, because there is no such thing. Three problems stack up:
+
+**Segmentation is not a table lookup.** Deciding where one user-perceived character ends and the next begins is a stateful algorithm over codepoint properties — UAX #29 — with rules for combining marks, joiners, regional indicators, emoji modifiers and variation selectors. `wcwidth`'s signature takes a single `wchar_t`. It cannot express the answer, let alone compute it.
+
+**Unicode changes the answers.** The widths of real codepoints moved between Unicode 8 and 9. A terminal built against one version of the tables and an application built against another will disagree about the same string, and neither is buggy.
+
+**The errors go both ways.** A ZWJ sequence *overcounts*: the farmer, `U+1F9D1 U+200D U+1F33E`, is 4 cells by `wcwidth` and 2 by segmentation. A variation selector *undercounts*: a heart with emoji presentation is `U+2764 U+FE0F`, which `wcwidth` calls 1 cell and segmentation calls 2, because VS16 promotes the cluster to emoji presentation. Code that only knows about the first case will still corrupt on the second.
+
+(Those sequences are spelled out rather than pasted here on purpose — the joiner that holds them together is invisible, and prose you cannot review is prose you cannot trust. `escapade grapheme render --debug U+1F9D1,U+200D,U+1F33E` prints the real thing.)
+
+The practical shape of the failure: `printf` of a family emoji inside a full-screen application. The application drew a box, wrote the emoji into it, then positioned the next field relative to where it believed the cursor was. The terminal is two cells further along. Borders shift, fields overlap, and a redraw does not fix it — the application's model of the screen is wrong rather than stale.
+'''
+
+how_it_works = '''
+Mode 2027 is an ordinary DEC private mode, which is the whole trick: it needs no new sequence, no new parser state and no capability string.
+
+```
+CSI ? 2027 h              DECSET   enable
+CSI ? 2027 l              DECRST   disable
+CSI ? 2027 $ p            DECRQM   request the current state
+CSI ? 2027 ; <value> $ y  DECRPM   the answer
+```
+
+With the mode set, the specification requires that:
+
+* the terminal segments its input by **UAX #29**, and every codepoint that does not begin a new cluster lands in the *same* grid cell as the one before it;
+* extending a cluster therefore does **not** move the cursor — with one exception, VS16, which can promote the cluster to width 2 and so does;
+* emoji are always rendered in a square aspect ratio, two cells wide, and a ZWJ emoji **must** be one image two cells wide rather than a decomposed row of sub-images, because decomposing it breaks the cursor-movement guarantee;
+* VS15 forces text presentation without changing the width;
+* writing into a cell that holds part of a cluster **erases** the cluster rather than appending to it;
+* cursor-movement semantics are otherwise unchanged — the cursor still moves by cells, not by clusters.
+
+A soft reset (DECSTR) or a hard reset (RIS) returns the mode to unset, so a program that dies without restoring it does not leave the mode on for whatever runs next.
+
+## Reading the DECRQM answer
+
+The specification defines no reply values of its own. It says DECRQM's answer "will indicate each state accurately enough not to need any new VT sequence introduced" and leaves the encoding to DECRQM, so the values are DEC's, as documented for DECRPM:
+
+| value | meaning |
+|-------|---------|
+| `0` | not recognized |
+| `1` | set |
+| `2` | reset |
+| `3` | permanently set |
+| `4` | permanently reset |
+
+`3` and `4` are not exotic here — they are how a terminal exposes a configuration that has already decided the question. Ghostty forces Unicode widths while the mode is set and falls back to its `grapheme-width-method` setting when it is reset; foot reports mode 2027 as permanently **reset** when its width method is not `double-width`, because it could not honour the mode if asked.
+
+**No answer at all is a sixth outcome**, and the most common one. A terminal that does not implement DECRQM stays silent, and so does a multiplexer that filters the query. Silence is not `0` — `0` is a terminal telling you something. Pair the query with a sequence every terminal answers, Primary Device Attributes `CSI c`, and the difference becomes visible, because terminals process input in order.
+
+## Ask about a mode that cannot exist
+
+Even with the barrier, the reply may be worthless — and worse, worthless in a way that looks authoritative. **iTerm2 answers `4`, permanently reset, for any mode it does not recognise**, fictional numbers included. Read literally, its answer says "I know mode 2027 and it is firmly off". It says nothing of the kind.
+
+The fix costs one sequence. Query an impossible mode as a **control**, in the same round trip and behind the same barrier:
+
+```
+→  CSI ? 2027 $ p       the real question
+→  CSI ? 9876543 $ p    the control
+→  CSI c                the barrier
+```
+
+Then read the pair, not the answer:
+
+| the control says | what follows |
+|---|---|
+| `0` not recognized | the terminal tells known modes from unknown ones, so **its mode 2027 answer means what it says** |
+| anything else | it answers the same way regardless, so **every DECRQM result in the run is uninformative** |
+| nothing, but the barrier answers | it implements no DECRQM at all — a permanent property, not a slow reply |
+| nothing, and no barrier either | nothing is known; something is eating replies |
+
+Silence about the impossible mode while the real one *is* answered counts as discrimination too: declining to invent a state for a mode it does not know is exactly the behaviour being tested for.
+
+The third row is a better finding than "no answer", because it is a fact about the terminal rather than about the moment. Konsole is in it.
+
+`escapade grapheme probe` sends the control and prints what it concluded. When the control voids the answer, the answer is still shown — marked as discarded, next to the reason — so a `4` from iTerm2 cannot be mistaken for a `4` from foot.
+'''
+
+payload = '''
+There is no payload; the mode number is the entire protocol. What there is instead is a **measurement**, and it is worth knowing because it is the only way to find out what a terminal actually does.
+
+```
+→  CSI 6 n                  where is the cursor?
+←  CSI <row> ; <col> R
+→  <the sequence>
+→  CSI 6 n
+←  CSI <row> ; <col> R       the difference is the cells it took
+```
+
+This works on every terminal, needs no cooperation, and answers the question the application has rather than the question the mode answers. Three numbers are worth putting side by side for one sequence:
+
+* what UAX #29 segmentation predicts,
+* what the terminal did with clustering **off**,
+* what the terminal did with clustering **on**.
+
+`escapade grapheme probe U+1F9D1,U+200D,U+1F33E --format debug` prints exactly that, and the bare `escapade grapheme probe` answers through its exit status alone so it composes as a shell predicate. When the mode is unavailable the measurement still works, which is why it is the primitive and the mode query is only a hint.
+'''
+
+security = '''
+There is nothing to trust here. Mode 2027 carries no payload, addresses no resource and grants no capability — it selects between two ways of counting cells.
+
+Two properties are still worth naming:
+
+**Nothing is executed.** The mode is a number inside a `CSI` sequence. A terminal that does not know it ignores it, exactly as it ignores every other unknown private mode, and the application's next byte is ordinary text.
+
+**Resets clear it.** DECSTR and RIS both return the mode to unset, so a crashed program cannot leave a terminal in a state the next program is surprised by.
+
+The real hazard in this area is the opposite of a security hole: it is *silent disagreement*. An application that assumes clustering and a terminal that does not provide it produce a corrupted display with no error anywhere. That is why querying — and better, measuring — matters more here than in features where a missing capability simply means nothing renders.
+'''
+
+caveats = '''
+* **Query, then verify.** A DECRQM answer is a claim about policy. What an application needs is the cell count, and `CSI 6 n` around a printed sequence measures it directly. When the two disagree, the measurement is right.
+* **`0` and silence are different.** `0` means the terminal parses DECRQM and does not know mode 2027. Silence means it does not answer DECRQM at all, or that something between you and it ate the reply. Treating them alike turns a probe into a coin flip.
+* **`3` and `4` are permanent — if they are real.** A terminal reporting `3` needs no enable, and one reporting `4` will not be talked into it — usually because its configured width method could not honour the mode. But check that the `4` means anything first: query an impossible mode as a control, because iTerm2 answers `4` for every mode it has never heard of, and a probe that skips the control reports a fabrication as a finding.
+* **Restore what you found.** Query before you set, and put the mode back to the reported state rather than sending a blind `CSI ? 2027 l`. Something further out — a shell integration, an editor — may have turned it on deliberately. Restore from the state the control vouched for, not the raw reply: an untrusted `4` says "nothing was changed" and would leave clustering switched on for whatever runs next.
+* **Multiplexers are the terminal.** Inside tmux or Zellij the multiplexer lays out the cells, so its width logic is the one that matters and the outer terminal's answer is unreachable from inside. Neither implements the mode, and passthrough does not help: forwarding `CSI ? 2027 h` past the multiplexer would leave two programs disagreeing about the same grid.
+* **The font still gets a vote.** Mode 2027 fixes *cursor advance*, not glyph coverage. A terminal can advance two cells correctly and still draw a ZWJ sequence as two separate emoji, or as tofu, when the font has no single glyph for it. The spec permits U+FFFD in that case.
+* **It does not make all widths agree.** Ambiguous-width East Asian characters, Private Use Area icons and Nerd Font glyphs are outside the mode's scope. It makes clustering well-defined; it does not make width universal.
+* **kitty declined it.** kitty specifies the segmentation algorithm it uses and offers the *text sizing protocol* instead, where the application states the width. That is a coherent position — one actor decides, so the two cannot disagree — but it means portable code needs both paths.
+
+## When the mode is unavailable
+
+Which is the common case. In rough order of preference:
+
+1. **Measure once at startup.** Print a known ZWJ sequence on a scratch line, take a `CSI 6 n` reading, erase it, and cache what this terminal does. One round trip buys certainty for the whole session.
+2. **State the width instead of asking.** Where the terminal supports the kitty text sizing protocol, `OSC 66 ; w=2 ; <text> ST` removes the disagreement by removing the negotiation.
+3. **Segment locally and emit conservatively.** Compute clusters and their widths yourself, then write text so the cursor ends up where you intend regardless of the terminal's rule — positioning the cursor explicitly between clusters rather than trusting the advance.
+4. **Avoid the input.** Applications that cannot re-measure often restrict themselves to single-codepoint characters in layout-critical positions, and substitute a placeholder for clusters they cannot account for.
+
+What not to do: assume, and hope. A layout built on the wrong cell count does not degrade gracefully — it corrupts, and it corrupts in a way a redraw cannot fix.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+verb = "DECSET"
+name = "Enable grapheme clustering"
+purpose = "Ask the terminal to segment text by UAX #29 and advance the cursor once per grapheme cluster."
+request = "CSI ? 2027 h"
+notes = '''No reply, and none is needed — a terminal that does not know the mode ignores it in silence, exactly as it ignores any other unknown private mode. That is what makes it safe to send optimistically, but it also means sending it tells you nothing. Query or measure if you need to know.'''
+
+[[sequence]]
+verb = "DECRST"
+name = "Disable grapheme clustering"
+purpose = "Return to the terminal's own width logic, whatever that happens to be."
+request = "CSI ? 2027 l"
+notes = '''The specification is explicit that with the mode unset the behaviour is "as undefined as if this specification was not implemented at all" — the point is backwards compatibility, not a second defined mode. Do not send this blindly at the end of a render: query first, and put back what was there.'''
+
+[[sequence]]
+verb = "DECRQM"
+name = "Request the mode's state"
+purpose = "Capability detection and state detection in one round trip: is the mode implemented, and is it on?"
+request = "CSI ? 2027 $ p"
+reply = "CSI ? 2027 ; <value> $ y"
+notes = '''`<value>` is DECRPM's: `0` not recognized, `1` set, `2` reset, `3` permanently set, `4` permanently reset. The `$` is an intermediate byte, so this is a different sequence shape from the `h`/`l` that switch the mode — a terminal can implement one and ignore the other. Silence is a sixth outcome and must not be folded into `0`.'''
+
+[[sequence]]
+verb = "DECRQM"
+name = "Impossible mode — the control"
+purpose = "Find out whether this terminal's DECRQM answers mean anything, by asking it about a mode that cannot exist."
+request = "CSI ? 9876543 $ p"
+reply = "CSI ? 9876543 ; <value> $ y"
+notes = "A `0` here means the terminal distinguishes modes it knows from modes it does not, so its mode 2027 answer can be believed. Anything else means it answers the same way either way, and **nothing** it said about mode 2027 is informative — iTerm2 replies `4`, permanently reset, for fictional modes. Silence here with the barrier answered means no DECRQM at all, which is Konsole. Send it in the same round trip as the real query, so one barrier covers both."
+
+[[sequence]]
+name = "Primary Device Attributes — the barrier"
+purpose = "Make silence measurable: every terminal since the VT100 answers this, so an answer here with none to the queries above is a real no rather than a timeout."
+request = "CSI c"
+reply = "CSI ? 62 ; 4 c"
+notes = '''Terminals process input in order. Send both DECRQMs first and this last; if the device-attributes answer arrives and a mode report did not, the terminal has demonstrably had its chance. Send it *unwrapped* even inside a multiplexer — the point is to learn whether the round trip completed at all.'''
+
+[[sequence]]
+name = "Cursor Position Report — the measurement"
+purpose = "Ask the terminal how many cells it actually used, rather than what it claims to support."
+request = "CSI 6 n"
+reply = "CSI <row> ; <col> R"
+notes = '''Take a reading, print the sequence, take another, subtract. This is the only sequence here that answers the question an application really has, and it works on terminals that have never heard of mode 2027. It is also, verbatim, how the kitty text sizing protocol documents detecting *its* support — that protocol has no width query either.'''
+
+# ---------------------------------------------------------------------------
+# Parameters.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "2027"
+applies_to = "DECSET, DECRST, DECRQM"
+default = ""
+description = "The mode number itself, claimed by the Terminal Unicode Core specification. Neighbouring numbers are unrelated features — 2026 is synchronized output, 2004 is bracketed paste — so a typo enables something else entirely."
+
+[[param]]
+key = "?"
+applies_to = "DECSET, DECRST, DECRQM, DECRPM"
+default = ""
+description = "The DEC private prefix. Without it the sequence and its reply concern *ANSI* mode 2027, a different number space; a parser that accepts `CSI 2027 ; 1 $ y` is reading the wrong answer."
+
+[[param]]
+key = "$"
+applies_to = "DECRQM, DECRPM"
+default = ""
+description = "Intermediate byte distinguishing the query (`$p`) and the report (`$y`) from the set/reset pair. Terminals commonly implement `h`/`l` for a mode without implementing `$p` for it."
+
+[[param]]
+key = "9876543"
+applies_to = "the control DECRQM"
+default = ""
+description = "A mode number no terminal implements, queried so its answer can be compared with the real one. Any confident state for this is proof that confident states from this terminal mean nothing."
+
+[[param]]
+key = "<value>"
+applies_to = "DECRPM reply"
+default = ""
+description = "`0` not recognized, `1` set, `2` reset, `3` permanently set, `4` permanently reset. Anything else is undefined and should be reported rather than guessed at."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "Contour"
+kind = "terminal"
+url = "https://github.com/contour-terminal/contour"
+notes = "Where the specification came from, and the first implementation."
+
+[[user]]
+name = "Ghostty"
+kind = "terminal"
+url = "https://ghostty.org/docs/config/reference"
+notes = "Implements the mode, and lets users choose the default independently through `grapheme-width-method`; the mode overrides that setting while it is set."
+
+[[user]]
+name = "foot"
+kind = "terminal"
+url = "https://codeberg.org/dnkl/foot"
+notes = "Implements DECSET/DECRST/DECRQM for the mode, and answers permanently reset when its configured width method could not honour it."
+
+[[user]]
+name = "WezTerm"
+kind = "terminal"
+url = "https://wezterm.org"
+notes = "Produced clustered widths before the mode existed; DECRQM support was added so applications could detect it."
+
+[[user]]
+name = "kitty"
+kind = "terminal, dissenting"
+url = "https://sw.kovidgoyal.net/kitty/text-sizing-protocol/"
+notes = "Declined the mode and specified the text sizing protocol instead, where the application states the width so the two cannot disagree."
+
+[[user]]
+name = "escapade"
+kind = "application"
+url = "https://github.com/fornwall/escapade"
+notes = "`escapade grapheme probe` asks with DECRQM and then measures with `CSI 6 n`, and reports the two separately when they disagree."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# The interesting distinction in this table is not really yes/no. It is between
+# terminals that implement *the mode* and terminals that merely happen to get
+# cluster widths right; an application that only checks DECRQM will misjudge
+# both kinds. `escapade grapheme probe` measures as well as asking.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "contour"
+status = "yes"
+notes = "The specification's home and first implementation. Reports clustered widths for ZWJ sequences."
+source = "https://github.com/contour-terminal/terminal-unicode-core"
+
+[[support]]
+terminal = "ghostty"
+status = "yes"
+notes = "Implements the mode. `grapheme-width-method = unicode` is the default, so clustered widths are already in effect and the mode's job is to force them regardless of configuration; with the mode set, Unicode widths win even if the setting says otherwise. Resetting it returns to the configured method."
+source = "https://ghostty.org/docs/config/reference"
+
+[[support]]
+terminal = "foot"
+status = "yes"
+since = "master, merged 2023-09"
+notes = "DECSET/DECRST/DECRQM all implemented. Reports **permanently reset** when `tweak.grapheme-width-method` is not `double-width` — an honest `4` rather than a silent failure, and exactly the case a probe must not report as plain unsupported."
+source = "https://codeberg.org/dnkl/foot/pulls/1489"
+
+[[support]]
+terminal = "wezterm"
+status = "yes"
+since = "nightly after 2023-09"
+notes = "Already produced clustered widths before the mode existed; DECRQM support was added so applications could detect it. The change landed in nightly first, so check the release you are on."
+source = "https://github.com/wezterm/wezterm/issues/4320"
+
+[[support]]
+terminal = "iterm2"
+status = "partial"
+notes = "Measured 2 cells for a ZWJ emoji, so its width logic already agrees with segmentation for the common cases — but no mode 2027 implementation is known.\n\n**Its DECRQM lies confidently.** iTerm2 answers `4` (permanently reset) for modes it has never heard of, fictional numbers included, so a `4` for mode 2027 is not a statement about grapheme clustering at all. A probe that reads it as one reports the exact opposite of the truth here: a terminal that clusters correctly, filed as having firmly refused to. Query an impossible mode as a control, and measure."
+source = "https://mitchellh.com/writing/grapheme-clusters-in-terminals"
+
+[[support]]
+terminal = "rio"
+status = "unknown"
+notes = "Not covered by the survey this table draws on, and no implementation has been verified either way."
+
+[[support]]
+terminal = "konsole"
+status = "unknown"
+notes = "No mode 2027 implementation is known, and Konsole implements no DECRQM at all — it answers the device-attributes barrier and says nothing about any mode, real or invented. That is a definite finding about the *query* and no finding at all about clustering, so its cell widths have to be measured rather than asked about."
+
+[[support]]
+terminal = "kitty"
+status = "no"
+notes = "Declined deliberately rather than overlooked. kitty specifies the exact segmentation algorithm it uses (UAX29-C1-1) and offers the **text sizing protocol** as the alternative: `OSC 66 ; w=2 ; <text> ST` lets the application state the width, which removes the disagreement instead of negotiating it. Measured 4 cells for the farmer emoji."
+source = "https://sw.kovidgoyal.net/kitty/text-sizing-protocol/"
+
+[[support]]
+terminal = "alacritty"
+status = "no"
+notes = "Per-codepoint widths; measured 4 cells for a three-codepoint ZWJ emoji."
+source = "https://mitchellh.com/writing/grapheme-clusters-in-terminals"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "no"
+notes = "VTE counts per codepoint; measured 4 cells in the survey."
+source = "https://mitchellh.com/writing/grapheme-clusters-in-terminals"
+
+[[support]]
+terminal = "xterm"
+status = "no"
+notes = "Measured 4 cells. xterm implements DECRQM thoroughly, so it should answer `0` for this mode — an explicit, useful no."
+source = "https://mitchellh.com/writing/grapheme-clusters-in-terminals"
+
+[[support]]
+terminal = "windows-terminal"
+status = "no"
+notes = "Measured 5 cells for the farmer emoji — neither the clustered nor the per-codepoint answer, which is its own category of wrong."
+source = "https://mitchellh.com/writing/grapheme-clusters-in-terminals"
+
+[[support]]
+terminal = "vscode"
+status = "no"
+notes = "xterm.js has no mode 2027 implementation, and its width logic is per-codepoint, so ZWJ sequences overcount."
+source = "https://github.com/xtermjs/xterm.js"
+
+[[support]]
+terminal = "tmux"
+status = "no"
+notes = "tmux does its own cell accounting and does not implement the mode, so inside tmux the answer that matters is tmux's. Passthrough cannot help: forwarding `CSI ? 2027 h` to the outer terminal would leave the two disagreeing about the same grid, which is worse than either being wrong alone."
+source = "https://github.com/tmux/tmux"
+
+[[support]]
+terminal = "zellij"
+status = "no"
+notes = "The same shape of problem as tmux — Zellij owns the grid inside a pane, and no mode 2027 implementation is known."
+source = "https://github.com/zellij-org/zellij"
+
+[[support]]
+terminal = "screen"
+status = "no"
+notes = "No implementation, and no realistic prospect of one."
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "Grapheme Clusters and Terminal Emulators — Mitchell Hashimoto, and the terminal survey this matrix draws on"
+url = "https://mitchellh.com/writing/grapheme-clusters-in-terminals"
+
+[[resource]]
+title = "Terminal Unicode Core — the specification that defines mode 2027"
+url = "https://github.com/contour-terminal/terminal-unicode-core"
+
+[[resource]]
+title = "UAX #29: Unicode Text Segmentation — the grapheme cluster boundary rules"
+url = "https://www.unicode.org/reports/tr29/"
+
+[[resource]]
+title = "The kitty text sizing protocol — the other answer, where the application states the width"
+url = "https://sw.kovidgoyal.net/kitty/text-sizing-protocol/"
+
+[[resource]]
+title = "DECRQM and DECRPM, with the reply values — xterm control sequences"
+url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[resource]]
+title = "foot's implementation, including why it reports permanently reset"
+url = "https://codeberg.org/dnkl/foot/pulls/1489"
+
+[[resource]]
+title = "kitty issue 7799 — the case for mode 2027, and why kitty went the other way"
+url = "https://github.com/kovidgoyal/kitty/issues/7799"

@@ -1,0 +1,11 @@
+# PLACEHOLDER — being written. See glyph-protocol.toml for the full schema.
+
+id = "clipboard"
+name = "Clipboard access"
+tagline = "Reach the clipboard of the machine the human is sitting at, from the machine the program runs on."
+status = "experimental"
+transport = "OSC"
+
+summary = '''
+Placeholder. This feature file is being written.
+'''

@@ -1,0 +1,506 @@
+# Text attributes (SGR)
+#
+# One file per terminal feature. Everything `escapade style explain` prints comes
+# from here, so prose edits need no Rust changes.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (''' ... ''') for prose so backslashes in escape
+#     sequences survive verbatim.
+#   * Write sequences symbolically: CSI, SGR, ESC — never embed a real 0x1b byte
+#     in this file. `escapade` prints these as text, and a literal control byte
+#     here would be executed by the reader's terminal instead. Write exotic
+#     codepoints as U+XXXX rather than pasting the character.
+#   * ONE SOURCE LINE PER PARAGRAPH. termimad re-wraps each source line
+#     independently, so a pre-wrapped paragraph wraps twice and reads ragged.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+
+id = "text-attributes"
+name = "Text attributes"
+tagline = "Bold, italic, six underline styles, strikethrough, overline, and three independent colours."
+author = "ECMA and ANSI, then DEC, aixterm, xterm and mintty in turn"
+status = "standard"
+transport = "CSI"
+spec_url = "https://ecma-international.org/publications-and-standards/standards/ecma-48/"
+spec_version = "ECMA-48 5th edition (June 1991)"
+
+summary = '''
+Select Graphic Rendition is the oldest escape sequence anybody still uses, and the most widely implemented. One `CSI` sequence carries every text attribute a terminal has, separated by semicolons and applied left to right:
+
+```
+CSI 1;3;4:3;9;38;2;255;0;0 m
+```
+
+That is bold, italic, a curly underline, a strikethrough and a red foreground, in thirty bytes. The composability is why `escapade` exposes all of it as one subcommand: nine subcommands would force `escapade underline "$(escapade bold text)"` and produce nested resets that fight each other.
+
+The family divides into three generations, and knowing which generation an attribute belongs to tells you almost everything about whether it will work.
+
+* **ECMA-48, and in the VT100.** `SGR 1` bold, `SGR 4` underline, `SGR 5` blink, `SGR 7` reverse. Nothing to check; these have worked everywhere for decades.
+* **ECMA-48, and unevenly implemented.** `SGR 2` faint, `SGR 3` italic, `SGR 8` conceal, `SGR 9` crossed-out, `SGR 53` overline. All in the standard, all skipped by somebody.
+* **Not in ECMA-48 at all.** The 256-colour and 24-bit forms of `SGR 38` and `SGR 48`, the underline shapes `4:1` through `4:5`, and the underline colour `SGR 58`. These are extensions, and the interesting ones.
+
+Nothing here needs to be probed before it is *sent*. A terminal that does not implement a parameter is required to ignore it, so every sequence on this page is safe to emit blind. What probing buys you is knowing whether it will be *seen* — and that is not a question you can answer by looking at your own output, because an ignored attribute and a rendered one are byte-for-byte identical from the sending end.
+'''
+
+problem = '''
+The problem with text attributes is not sending them. It is that **success and failure look identical from where you are standing.**
+
+A program that emits `CSI 3 m` for italic has no idea whether the terminal drew a slanted glyph, picked something else instead, or dropped the parameter on the floor. A program that emits `CSI 38;2;220;50;47 m` for a specific red may get that red, or may get whichever of 256 palette entries happens to be nearest — which will be recognisably wrong and indistinguishable from a bug in the program. A program that emits `CSI 4:3 m` for a curly underline gets a curly underline on a good fraction of terminals and a straight one on the rest, and if it also uses `4:4` for a different severity then those two severities are now the same mark.
+
+The usual response is to consult `TERM` and terminfo, which answers a different question. Terminfo describes what the *database* was told, by whoever wrote the entry, about a terminal that may not be the one at the other end of the pipe. `TERM=xterm-256color` is what nearly every terminal sets for compatibility, and it says nothing whatsoever about whether curly underlines work.
+
+There is a better answer for a good fraction of terminals, and it is what `escapade style probe` uses: **ask the terminal what it just did.** DECRQSS (`DCS $ q m ST`) requests the current graphic rendition, and the terminal answers with the SGR sequence it would have to emit to reproduce its own state. Set `4:3`, ask, and read the reply — a terminal that parsed the sub-parameter reports `4:3` back, and one that flattened it reports `4`. Set a 24-bit colour, ask, and a terminal that quantised it reports a palette entry instead. That is a measurement rather than a guess, and it catches exactly the silent substitutions no amount of reading `TERM` ever will.
+'''
+
+how_it_works = '''
+Every attribute is a parameter of one sequence:
+
+```
+CSI <parameter> ; <parameter> ; ... m
+```
+
+`CSI` is `ESC [`, the final byte `m` is what makes the sequence SGR rather than one of the hundred other things `CSI` introduces, and the parameters are applied in order.
+
+**Parameters and sub-parameters are different things.** ECMA-48 separates parameters with `;` and the parts of a single parameter with `:`. So `4:3` is *one* parameter — "underline, of shape 3" — while `4;3` is *two*: underline, then italic. This distinction is the most important thing on this page, because it decides what happens on a terminal that does not recognise what you sent. A parameter it does not know, it must skip **whole**, sub-parameters included. A parameter it does know, it acts on. That is what makes `CSI 4:3 m` safe to send blind: the worst case is a plain underline.
+
+**The reset for each attribute is a different number, and the mapping is neither sequential nor one-to-one.**
+
+| set | off | note |
+|-----|-----|------|
+| `1` bold | `22` | shares its reset with faint |
+| `2` faint | `22` | shares its reset with bold |
+| `3` italic | `23` | also "not Fraktur", `20` being the other thing `23` undoes |
+| `4` underline, `4:1`-`4:5` | `24` | `4:0` says the same thing in the sub-parameter spelling |
+| `5` slow blink | `25` | shares its reset with rapid blink |
+| `6` rapid blink | `25` | shares its reset with slow blink |
+| `7` reverse | `27` | |
+| `8` conceal | `28` | |
+| `9` crossed-out | `29` | |
+| `53` overline | `55` | **not `54`** |
+| `30`-`37`, `90`-`97`, `38` | `39` | |
+| `40`-`47`, `100`-`107`, `48` | `49` | |
+| `58` underline colour | `59` | and `39` does **not** reset it |
+
+Two rows of that table are worth staring at. `SGR 22` is "normal colour or normal intensity" and cancels **both** `1` and `2`, so there is no way to stop being bold and stay faint; `SGR 25` does the same for the two blinks. A program that tracks its own attribute state has to model that, because the terminal does.
+
+**`SGR 53` resets with `55`, not `54`.** `54` is "not framed, not encircled" — the reset for `51` and `52`, which essentially nothing implements. Reaching for `54` to cancel an overline does nothing at all on every terminal that actually draws overlines, and nothing visibly wrong on the ones that do not, so the mistake survives review.
+
+**Resetting only what you set.** `CSI 0 m` is shorter than a list of specific resets and is what most programs emit. It is also wrong whenever your output is nested inside somebody else's: `CSI 0 m` clears the *surrounding* program's attributes too, which is how one styled word in the middle of a coloured line takes the rest of the line with it. `escapade` emits the specific resets for exactly the attributes it set.
+'''
+
+payload = '''
+Three parameters take a payload rather than standing alone: `38` for the foreground, `48` for the background and `58` for the underline colour. All three share one syntax, and that syntax has two spellings which are **not** interchangeable.
+
+```
+CSI 38 ; 5 ; <n> m                palette entry, semicolon form
+CSI 38 : 5 : <n> m                palette entry, colon form
+CSI 38 ; 2 ; <r> ; <g> ; <b> m    24-bit, semicolon form
+CSI 38 : 2 : : <r> : <g> : <b> m  24-bit, colon form
+```
+
+The colon form is the one ITU-T T.416 (ISO 8613-6) actually specifies, and the strange empty slot in `38:2::<r>:<g>:<b>` is real: sub-parameter 1 selects the colour space (`2` for direct RGB, `5` for an indexed lookup), sub-parameter 2 is a colour-space identifier that nothing uses and everybody leaves empty, and the components follow. Drop the empty slot and every component shifts down one, which produces a different colour rather than an error.
+
+The semicolon form is a misreading of that specification. It became universal anyway, because xterm accepted it and everything copied xterm, and it is now the **safer** choice for `38` and `48` — not because it is more correct but because it is more widely parsed. Being right about T.416 is worth less than being understood.
+
+**For `SGR 58` the balance tips the other way, and this is where real breakage lives.** `58` arrived long after the colon form was established, terminfo's `Setulc` capability emits colons, and the terminals that implement underline colour were written against that. More to the point, consider what each spelling does on a terminal that does **not** implement `58`:
+
+* `CSI 58:2::255:0:0 m` is one unknown parameter. It is skipped whole. Nothing happens, which is exactly what you want.
+* `CSI 58;2;255;0;0 m` is five parameters: `58` (unknown, skipped), `2` (**faint**), `255` (unknown), `0` (**reset everything**), `0`. The zero components of your colour are indistinguishable from `SGR 0`, so a colour specification silently becomes a full attribute reset and the rest of the line loses its styling.
+
+That asymmetry is why `escapade` spells `38` and `48` with semicolons and `58` with colons, and why it never emits the semicolon form of `58` at all.
+
+**Basic colours have no `58` equivalent.** `SGR 31` sets a red foreground and `SGR 41` a red background, but there is no `SGR 5x` for a red underline: `58` takes only an index or an RGB triple. Since the first sixteen palette entries *are* the basic sixteen colours, a named underline colour becomes `58:5:1` and nothing is lost but the spelling.
+
+**The bright eight — `90`-`97` and `100`-`107` — are not in ECMA-48.** They come from aixterm, and they are not the same thing as `SGR 1` plus a basic colour, even though a great many terminals render bold by brightening and thereby blur the two.
+'''
+
+security = '''
+Emitting an attribute is safe. Everything on this page is a cell attribute; none of it moves the cursor, reads the screen, executes anything or persists beyond the run. The sharp edges are all on the sending side, and there are three.
+
+**The text is not inside the sequence.** `CSI 1 m <text> CSI 22 m` puts the text *between* two sequences, where it is ordinary terminal output with all the authority that implies. Untrusted text — a filename, a branch name, a compiler message, a line of somebody's log — can carry its own `CSI 0 m` and cancel the styling, its own `CSI 2 J` and clear the screen, or its own `OSC 8` and make the rest of the line a link somewhere else. `escapade` replaces every byte in the text that could introduce or terminate a sequence with its glyph from the Unicode Control Pictures block, so an `ESC` smuggled into a filename shows up as a visible U+241B instead of executing. That includes the eight-bit spellings: U+009B is `CSI` in a single byte, and a sanitiser that only looks for U+001B lets it straight through.
+
+**`SGR 8` conceal is not a security measure, and the name invites the mistake.** Concealed text is still in the cell. It is still selected by a drag, still copied to the clipboard, still read back by a screen scraper and still present in a `script` transcript. It hides glyphs from a person looking at the screen and from nothing else. Anything that would matter if it were disclosed — a password, a token, a key — must not be written to the terminal at all, concealed or otherwise.
+
+**Blinking text is an accessibility hazard.** Flashing content is a photosensitivity trigger, and the web platform has explicit guidance about it for exactly that reason. A number of terminals decline to animate `SGR 5`, and that is a deliberate choice rather than a gap. Treat blink as decorative and never as the only way something is marked: if the blink is the difference between "this is fine" and "this is on fire", the message is lost on every terminal that does the responsible thing.
+
+One more, less a risk than a courtesy: **leaving an attribute set is a bug.** A command that exits without resetting leaves the user's shell prompt bold, or underlined, or in whatever colour it chose. The fix costs one sequence, and the reset for each attribute is in the table above.
+'''
+
+caveats = '''
+* **`SGR 21` means two different things, and cannot be relied on for either.** ECMA-48 defines it as "doubly underlined". A great many terminals implement it as "bold off" instead. That makes `21` the one parameter in this family whose meaning genuinely depends on who is reading it, and there is no way to tell from the sending end which you got. Both readings have unambiguous alternatives — `4:2` to set a double underline, `22` to cancel bold — so `escapade` never emits `21` at all. It does *accept* `21` when reading a terminal's own attribute report back, because a terminal that normalises `4:2` to `21` on the way out has still kept the information.
+* **xterm implements none of the styled underlines.** This inverts the usual assumption about who leads on terminal features. xterm is the reference implementation of nearly everything else in terminal emulation, and `4:2` through `4:5` and `SGR 58` are simply not in it — a plain underline is all you get. The shapes were originated by **mintty**, a Cygwin terminal most Unix developers have never run, and adopted from there by kitty, VTE, foot, WezTerm and the rest.
+* **A terminal without 24-bit colour usually accepts your colour and throws it away.** This is the worst failure mode in the family, because it is not a failure. `CSI 38;2;220;50;47 m` uses a parameter every terminal recognises, so it is parsed, and a terminal limited to 256 colours quantises to the nearest palette entry. The result is a colour that is nearly right, which reads as a bug in your program rather than a limit of the terminal. It is the single best argument for probing: `escapade style probe --color '#010203'` sets a deliberately awkward value — small components, none of them equal, so no rounding can return it unchanged — and reads back what the terminal says it has, making quantisation visible rather than merely suspected.
+* **`SGR 6` rapid blink is almost universally treated as `SGR 5`.** ECMA-48 distinguishes them; hardware rarely did and software mostly does not. An attribute readback catches this too, because a terminal that folded the two reports `5` when you set `6`.
+* **Bold is reliably *different* and not reliably *heavier*.** Some terminals draw a bold font face, some brighten the colour, and several do both. A palette of eight colours plus bold is how sixteen colours were addressed for decades, and that history is still visible in terminals that have a "bold is bright" setting. If you need weight, do not rely on bold to carry it alone.
+* **`SGR 2` faint is quietly ignored by a fair number of terminals**, and it shares its reset with bold, so `--bold --dim` together cannot be partially undone.
+* **Overline is the rarest attribute here.** `SGR 53` is in ECMA-48 and implemented by relatively few terminals. Its reset is `55`, and `54` does not work.
+* **`SGR 20` Fraktur, `SGR 51` framed and `SGR 52` encircled are in the standard and essentially nothing implements them.** They are listed here so that a reader who finds them in ECMA-48 knows not to bother, and because `54` — their reset — is the number most often mistaken for the overline reset.
+* **A multiplexer is a terminal too.** tmux, Zellij and GNU Screen parse SGR themselves, store attributes in their own grid and re-emit them to the terminal outside. Whether a curly underline survives that round trip depends on the *outer* terminal's terminfo carrying the `Smulx` and `Setulc` extended capabilities, which is not visible from inside the multiplexer. Both a probe's measurement and its inference are therefore about the multiplexer rather than about the terminal you can see, and `escapade style probe` says so instead of guessing.
+* **`NO_COLOR` is about colour, not about styling.** The convention is that the variable, when present and not empty, suppresses colour — and "regardless of its value", so `NO_COLOR=0` means no colour just as `NO_COLOR=1` does. It says nothing about bold, italic or the shape of an underline, so `escapade style` drops the three colours and keeps everything else.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences. SGR has no verbs, so these are the operations worth seeing
+# spelled out, roughly in the order the prose introduces them.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+name = "Set attributes"
+purpose = "Apply one or more attributes to everything printed until they are changed."
+request = "CSI 1;3;9 m"
+notes = '''Parameters are separated by `;` and applied left to right — bold, italic and crossed-out here. There is no limit worth worrying about and no reason to send them as separate sequences.'''
+
+[[sequence]]
+name = "Reset everything"
+purpose = "Return every attribute to its default in one parameter."
+request = "CSI 0 m"
+notes = '''`CSI m` with no parameter at all means the same thing. Convenient, and wrong whenever your output is nested inside somebody else's — it clears their attributes as well as yours, which is how a styled word takes the rest of a coloured line with it.'''
+
+[[sequence]]
+name = "Reset specific attributes"
+purpose = "Undo exactly what you set, leaving the surrounding program's styling alone."
+request = "CSI 22;23;29 m"
+notes = '''The counterpart of the first example: `22` cancels bold, `23` italic, `29` crossed-out. Note that `22` also cancels faint, because ECMA-48 gives bold and faint one reset between them.'''
+
+[[sequence]]
+name = "A plain underline"
+purpose = "The underline that has worked on every terminal ever built."
+request = "CSI 4 m"
+reply = "CSI 24 m turns it off"
+notes = '''ECMA-48 `SGR 4`, "singly underlined". `4:1` says exactly the same thing in the sub-parameter spelling and buys nothing, so `escapade` emits the short form: it needs no sub-parameter parser, which matters for the one shape that has a portable alternative.'''
+
+[[sequence]]
+name = "A curly underline"
+purpose = "The spell-checker underline: mark a word as wrong without recolouring it."
+request = "CSI 4:3 m"
+reply = "CSI 24 m turns it off, as does CSI 4:0 m"
+notes = '''One parameter with a sub-parameter, not two parameters. `4:0` none, `4:1` single, `4:2` double, `4:3` curly, `4:4` dotted, `4:5` dashed. A terminal that does not know the shape must skip the whole parameter, so the worst case is a plain underline. Originated by mintty; xterm implements none of `4:2` through `4:5`.'''
+
+[[sequence]]
+name = "An underline colour"
+purpose = "Colour the underline independently of the text, which is the whole point for a linter."
+request = "CSI 58:2::255:0:0 m"
+reply = "CSI 59 m returns it to following the foreground"
+notes = '''Note the two colons after the `2`: sub-parameter 2 is ITU-T T.416's colour-space identifier, which nothing uses and most terminals expect to be present. `SGR 39` resets the foreground and does **not** touch this. The semicolon spelling `CSI 58;2;255;0;0 m` is accepted by many terminals and is a trap on the rest — see the payload section.'''
+
+[[sequence]]
+name = "An underline colour from the palette"
+purpose = "The same thing against the user's own colour scheme rather than an absolute value."
+request = "CSI 58:5:9 m"
+notes = '''`5` selects an indexed lookup and the index follows. There is no basic-colour form of `SGR 58` — no `5x` to match `31` and `41` — so a named colour becomes an index into the first sixteen palette entries, which are those same colours.'''
+
+[[sequence]]
+name = "A 24-bit foreground"
+purpose = "An exact colour, rather than the nearest of 256."
+request = "CSI 38;2;220;50;47 m"
+reply = "CSI 39 m returns it to the default"
+notes = '''Spelled with semicolons because that is what every terminal accepts, even though `38:2::220:50:47` is what ITU-T T.416 specifies. The failure mode is the dangerous one: a terminal without 24-bit colour still recognises `38`, so it does not ignore this — it quantises to the nearest palette entry and gives you a colour that is nearly right.'''
+
+[[sequence]]
+name = "An overline"
+purpose = "A line above the text. The rarest attribute in the family."
+request = "CSI 53 m"
+reply = "CSI 55 m turns it off"
+notes = '''`55`, not `54`. `54` is "not framed, not encircled" — the reset for `51` and `52` — so cancelling an overline with `54` does nothing at all, invisibly, on every terminal that actually draws overlines.'''
+
+[[sequence]]
+name = "Ask what the attributes currently are"
+purpose = "DECRQSS for SGR: the only way to find out what the terminal did with what you sent."
+request = "DCS $ q m ST"
+reply = "DCS 1 $ r 0;4:3 m ST"
+notes = '''The terminal answers with the SGR sequence it would have to emit to reproduce its own current state. Set an attribute, ask, and compare: a terminal that parsed `4:3` reports `4:3`, one that flattened it reports `4`, and one that quantised a 24-bit colour reports a palette entry. Pair it with a Primary Device Attributes request (`CSI c`) as a barrier, since every terminal answers that, so silence can be told apart from slowness. Not universally implemented — where it is missing, capability has to be inferred from the terminal's identity instead, and a probe should say which of the two it did.'''
+
+# ---------------------------------------------------------------------------
+# Parameters.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "0"
+applies_to = "everything"
+default = "0"
+description = "Reset all attributes. An SGR sequence with no parameters at all means this."
+
+[[param]]
+key = "1 / 2 / 22"
+applies_to = "intensity"
+default = "22"
+description = "Bold and faint, with one reset between them — `22` is \"normal intensity\" and cancels both, so bold cannot be cancelled while keeping faint. Bold is rendered as a heavier face by some terminals and as a brighter colour by others."
+
+[[param]]
+key = "3 / 23"
+applies_to = "italic"
+default = "23"
+description = "Italic. `23` is also \"not Fraktur\", `SGR 20` being the other thing it undoes — and Fraktur is implemented by essentially nothing."
+
+[[param]]
+key = "4 / 4:0-4:5 / 24"
+applies_to = "underline"
+default = "24"
+description = "Underline, with an optional sub-parameter selecting the shape: `0` none, `1` single, `2` double, `3` curly, `4` dotted, `5` dashed. `4` alone and `4:1` mean the same thing, as do `24` and `4:0`; the short spellings need no sub-parameter parser."
+
+[[param]]
+key = "5 / 6 / 25"
+applies_to = "blink"
+default = "25"
+description = "Slow and rapid blink, with one reset between them. `6` is almost universally treated as `5`. Several terminals deliberately animate neither, because flashing content is a photosensitivity trigger."
+
+[[param]]
+key = "7 / 27"
+applies_to = "reverse"
+default = "27"
+description = "Swap foreground and background. Universal, and it swaps the effective colours, so it interacts with whatever the defaults are rather than with a colour you set."
+
+[[param]]
+key = "8 / 28"
+applies_to = "conceal"
+default = "28"
+description = "Hide the glyphs. Not a security measure: the characters remain in the cells and are still selectable, still copied, and still present in a transcript."
+
+[[param]]
+key = "9 / 29"
+applies_to = "crossed-out"
+default = "29"
+description = "A line through the text. terminfo calls it `smxx`, which is worth knowing because the name shares nothing with the number."
+
+[[param]]
+key = "21"
+applies_to = "contested"
+default = ""
+description = "\"Doubly underlined\" in ECMA-48; \"bold off\" in a great many terminals. The one parameter here whose meaning cannot be relied on, and one `escapade` never emits — `4:2` and `22` say each of the two things unambiguously."
+
+[[param]]
+key = "20 / 51 / 52 / 54"
+applies_to = "Fraktur, framed, encircled"
+default = "54"
+description = "In ECMA-48 and implemented by essentially nothing. Listed so a reader who finds them in the standard knows not to bother, and because `54` is the reset most often mistaken for the overline reset."
+
+[[param]]
+key = "53 / 55"
+applies_to = "overline"
+default = "55"
+description = "A line above the text. The reset is `55`; `54` is the reset for framed and encircled, and using it here does nothing at all."
+
+[[param]]
+key = "30-37 / 90-97 / 39"
+applies_to = "foreground"
+default = "39"
+description = "The eight basic colours and their bright forms. The bright eight are not in ECMA-48 — they come from aixterm — and they are not the same thing as bold plus a basic colour, though many terminals blur the two."
+
+[[param]]
+key = "40-47 / 100-107 / 49"
+applies_to = "background"
+default = "49"
+description = "The same eight colours and their bright forms, applied to the cell background."
+
+[[param]]
+key = "38 / 48 / 58"
+applies_to = "extended colour"
+default = ""
+description = "Foreground, background and underline colour. Each takes `5` and an index for the 256-colour palette, or `2` and three components for 24-bit colour. Written `38;5;n` and `38;2;r;g;b` with semicolons, or `38:5:n` and `38:2::r:g:b` with colons — the latter being what ITU-T T.416 specifies, empty colour-space slot included."
+
+[[param]]
+key = "59"
+applies_to = "underline colour"
+default = "59"
+description = "Return the underline colour to following the foreground. `SGR 39` does not do this; the two colours are independent, which is the entire reason `SGR 58` exists."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "Vim and Neovim"
+kind = "application"
+url = "https://neovim.io/doc/user/syntax.html"
+notes = "An `undercurl` attribute plus `guisp` for its colour is how a spell error is marked — and the pairing of a shape with an independent colour is exactly what `SGR 4:3` and `SGR 58` were added for."
+
+[[user]]
+name = "rustc and Cargo"
+kind = "application"
+url = "https://doc.rust-lang.org/rustc/command-line-arguments.html"
+notes = "Diagnostics use bold for the message, a colour for the severity and an underline for the span — three attributes in one sequence, which is why they are one feature rather than three."
+
+[[user]]
+name = "GCC"
+kind = "application"
+url = "https://gcc.gnu.org/onlinedocs/gcc/Diagnostic-Message-Formatting-Options.html"
+notes = "`-fdiagnostics-color` emits SGR for severities and carets. That the option exists at all is because getting this wrong on a terminal that does not support it is worse than plain text."
+
+[[user]]
+name = "delta"
+kind = "application"
+url = "https://dandavison.github.io/delta/"
+notes = "Leans on 24-bit background colours for diff highlighting, which makes it one of the tools where quantisation to 256 colours is immediately and unmistakably visible."
+
+[[user]]
+name = "bat"
+kind = "application"
+url = "https://github.com/sharkdp/bat"
+notes = "Syntax highlighting is almost entirely `SGR 38` at whichever depth the terminal turns out to support, which is why it consults `COLORTERM`."
+
+[[user]]
+name = "tmux"
+kind = "application"
+url = "https://github.com/tmux/tmux/wiki/FAQ"
+notes = "Both a consumer and a producer: it parses SGR into its own grid and re-emits it, and needs the outer terminal's `Smulx` and `Setulc` capabilities to pass styled underlines through."
+
+[[user]]
+name = "ncurses and terminfo"
+kind = "library"
+url = "https://invisible-island.net/ncurses/man/terminfo.5.html"
+notes = "The standard capabilities (`bold`, `dim`, `sitm`, `smul`, `blink`, `rev`, `invis`) cover the ECMA-48 core; the user-defined extensions (`Smulx`, `Setulc`, `smxx`, `Smol`) are where the newer attributes live. The split is itself a map of which generation an attribute belongs to."
+
+[[user]]
+name = "mintty"
+kind = "terminal"
+url = "https://github.com/mintty/mintty/wiki/Changelog"
+notes = "Originated the underline shapes `4:2` through `4:5`. The most surprising provenance in terminal emulation: a Cygwin terminal, not xterm, is why editors can draw a curly underline."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# Note on scope: every terminal here implements the ECMA-48 core. What these rows
+# are actually about is the extensions — the underline shapes, SGR 58 and 24-bit
+# colour — plus the awkward middle group of faint, conceal, blink and overline.
+# `escapade style probe` reports per attribute rather than per terminal for
+# exactly this reason; src/features/style/supports.rs holds the finer-grained
+# table it consults, and a measurement always beats both.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+notes = "All six underline shapes, `SGR 58` in the colon form, 24-bit colour, and overline. kitty's documentation is also the clearest write-up of the styled-underline extension anywhere, and a good place to start reading."
+source = "https://sw.kovidgoyal.net/kitty/underlines/"
+
+[[support]]
+terminal = "foot"
+status = "yes"
+notes = "All six shapes, `SGR 58`, 24-bit colour and overline — one of the most complete implementations of the whole family."
+source = "https://codeberg.org/dnkl/foot"
+
+[[support]]
+terminal = "wezterm"
+status = "yes"
+notes = "All six shapes, `SGR 58` and 24-bit colour. Notably accepts both the colon and the semicolon spelling of the extended colours, which is a kindness that also makes it a poor place to test portability."
+source = "https://wezterm.org/escape-sequences.html"
+
+[[support]]
+terminal = "ghostty"
+status = "yes"
+notes = "All six shapes, `SGR 58` and 24-bit colour."
+source = "https://ghostty.org/docs"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "yes"
+since = "VTE 0.52"
+notes = "VTE had curly underlines and `SGR 58` years before most, which is why `VTE_VERSION` is a useful thing to read. Dotted and dashed are the two shapes worth checking on any given version. Everything built on VTE inherits this: GNOME Console, Tilix, xfce4-terminal, Guake."
+source = "https://gitlab.gnome.org/GNOME/vte"
+
+[[support]]
+terminal = "windows-terminal"
+status = "yes"
+notes = "All six shapes, `SGR 58` and 24-bit colour. Microsoft's own sequence reference is unusually explicit about which SGR parameters are implemented, which makes it a good document to check a claim against."
+source = "https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences"
+
+[[support]]
+terminal = "vscode"
+status = "yes"
+notes = "Via xterm.js, which gained styled underlines and underline colour together. Anything else embedding xterm.js at a recent version inherits them."
+source = "https://code.visualstudio.com/docs/terminal/appearance"
+
+[[support]]
+terminal = "alacritty"
+status = "yes"
+notes = "All six shapes, `SGR 58` and 24-bit colour. Overline is the attribute worth checking here."
+source = "https://github.com/alacritty/alacritty/blob/master/CHANGELOG.md"
+
+[[support]]
+terminal = "iterm2"
+status = "partial"
+notes = "Double and curly underlines and 24-bit colour are long-standing. Dotted, dashed and `SGR 58` are the ones to verify against a current build — this row is less certain than the eight above it."
+source = "https://iterm2.com/documentation-escape-codes.html"
+
+[[support]]
+terminal = "contour"
+status = "partial"
+notes = "The ECMA-48 core and 24-bit colour. The underline shapes and `SGR 58` are documented among its VT extensions but are not pinned to a version here."
+source = "https://contour-terminal.org/vt-extensions/"
+
+[[support]]
+terminal = "konsole"
+status = "partial"
+notes = "The ECMA-48 core and 24-bit colour. The underline shapes and `SGR 58` are unverified against a current Konsole; this is one of the least certain rows in the table."
+source = "https://konsole.kde.org"
+
+[[support]]
+terminal = "rio"
+status = "partial"
+notes = "The ECMA-48 core and 24-bit colour. The underline shapes and `SGR 58` are unverified here."
+source = "https://rioterm.com/docs"
+
+[[support]]
+terminal = "xterm"
+status = "partial"
+notes = "**The interesting row.** xterm implements the ECMA-48 core faithfully — bold, faint, italic, blink, reverse, conceal, crossed-out and a plain underline — and implements **none** of the underline shapes `4:2` through `4:5`, and no `SGR 58`. Those were originated by mintty. 24-bit colour depends on how the binary was compiled: many builds accept `38;2;r;g;b` and quantise it to the 256-entry palette, which is precisely the silent substitution `escapade style probe` exists to catch."
+source = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[support]]
+terminal = "tmux"
+status = "passthrough"
+notes = "tmux parses SGR into its own grid and re-emits it, so it is a terminal in its own right rather than a pipe. Styled underlines and underline colour reach the outer terminal only when tmux knows that terminal supports them, via the `Smulx` and `Setulc` extended terminfo capabilities or `terminal-features`. None of that is visible from inside tmux, which is why a probe run in here reports what tmux does and says so rather than guessing about the terminal beyond it."
+source = "https://github.com/tmux/tmux/wiki/FAQ"
+
+[[support]]
+terminal = "zellij"
+status = "partial"
+notes = "Parses and re-emits SGR like any multiplexer. Fidelity for the newer attributes is not pinned down here, and as with tmux a probe from inside reports the multiplexer rather than the terminal beyond it."
+source = "https://zellij.dev/documentation/"
+
+[[support]]
+terminal = "screen"
+status = "partial"
+notes = "The ECMA-48 core and the 256-colour palette. GNU Screen is the least capable of the three multiplexers for anything newer, and it also answers queries out of order, which makes capability probing unreliable from inside it."
+source = "https://www.gnu.org/software/screen/manual/screen.html"
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "ECMA-48 — the standard that defines SGR, and the source of the reset mapping"
+url = "https://ecma-international.org/publications-and-standards/standards/ecma-48/"
+
+[[resource]]
+title = "xterm control sequences — the de facto reference for what a terminal accepts"
+url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[resource]]
+title = "kitty: colored and styled underlines"
+url = "https://sw.kovidgoyal.net/kitty/underlines/"
+
+[[resource]]
+title = "mintty changelog — where the underline shapes were originated"
+url = "https://github.com/mintty/mintty/wiki/Changelog"
+
+[[resource]]
+title = "Microsoft: console virtual terminal sequences, with an explicit SGR list"
+url = "https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences"
+
+[[resource]]
+title = "terminfo(5) — the standard capabilities and the user-defined extensions"
+url = "https://invisible-island.net/ncurses/man/terminfo.5.html"
+
+[[resource]]
+title = "NO_COLOR — present and non-empty suppresses colour, regardless of its value"
+url = "https://no-color.org/"
+
+[[resource]]
+title = "WCAG on flashing content, which is why several terminals decline to animate blink"
+url = "https://www.w3.org/WAI/WCAG22/Understanding/three-flashes-or-below-threshold.html"

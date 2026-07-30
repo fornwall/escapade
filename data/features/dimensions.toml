@@ -1,0 +1,350 @@
+# Terminal dimensions
+#
+# One file per terminal feature. Everything `escapade dimensions explain` prints
+# comes from here, so prose edits need no Rust changes.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslashes in
+#     sequences survive verbatim.
+#   * Write sequences symbolically: ESC, CSI, OSC, ST — never embed a real 0x1b
+#     byte in this file. `escapade` prints these as text, and a literal control
+#     byte here would be executed by the reader's terminal instead.
+#   * One source line per paragraph. termimad re-wraps every source line on its
+#     own, so prose that arrives pre-wrapped gets wrapped twice and comes out
+#     ragged.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+
+id = "dimensions"
+name = "Terminal dimensions"
+tagline = "Find out how big the terminal is, in cells and in pixels, and act on it."
+status = "de-facto-standard"
+author = "Sun (dtterm), Thomas Dickey (xterm)"
+transport = "CSI"
+spec_url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+summary = '''
+Every terminal program needs to know how big the terminal is, and almost all of them stop at columns and rows. That is enough to lay out text and nothing else. Draw an image, a sparkline, a rounded box or anything sized in real space and the number you actually need is **how many pixels a character cell is** — which depends on the terminal, the font and the display, and which a program has no way to guess.
+
+There are two mechanisms, and the difference between them is the whole story.
+
+* **The ioctl.** `TIOCGWINSZ` on the pty carries four numbers: `ws_col`, `ws_row`, `ws_xpixel` and `ws_ypixel`. It is a system call, so there is no round trip, nothing to time out, and nothing a multiplexer can filter. Linux's `tty_ioctl(4)` calls the two pixel fields "unused" and they are optional in principle, but in practice most Unix terminals do fill them in — kitty, foot, WezTerm, Alacritty, Ghostty, xterm, st, Rio, Contour, iTerm2, Konsole, tmux and Zellij all do. The real gaps are VTE (so GNOME Terminal), GNU Screen, and everything on Windows, where ConPTY has no notion of a pixel at all.
+* **The escape sequences.** `CSI 18 t` asks for the text area in characters, `CSI 14 t` for it in pixels, and `CSI 16 t` for the size of one cell. These are dtterm's *window manipulation* operations, which xterm adopted and most modern terminals copied from xterm. They are a query and a reply, so they need a terminal willing to answer, they can be swallowed by a multiplexer, and they cost a round trip.
+
+Prefer the ioctl, fall back to the sequences, and derive the cell size by division when nothing reports one. `escapade dimensions` does all three and says which of them answered — because when two sources disagree, or a number is simply unavailable, that is the useful part of the answer.
+'''
+
+problem = '''
+The usual approach is to read `$COLUMNS` and `$LINES`, or to shell out to `tput cols`. Both are cells only, both are maintained by the shell rather than by the terminal, and both are stale the moment the window is resized in a way the shell has not noticed.
+
+Nothing outside the ioctl and these three queries reports a pixel size at all. The kitty graphics protocol needs a cell size to place an image over a given number of cells; the kitty text sizing protocol needs one to reason about scaled text; a Sixel image needs one to know how much room it will take. Each of them documents the same recipe: ask with `CSI 16 t`, and be ready for silence.
+'''
+
+how_it_works = '''
+The three queries are ordinary CSI sequences with a final byte of `t`, and their answers come back as CSI sequences with the same final byte plus a leading parameter saying which question is being answered.
+
+**Every reply puts the vertical number first.** `CSI 8 ; rows ; cols t`, `CSI 4 ; height ; width t`, `CSI 6 ; height ; width t` — height before width, rows before columns, in all of them. Reading a reply as width-then-height transposes the answer, and on a window that happens to be square it does so invisibly. This is the most common mistake made with these sequences.
+
+Send all three at once. A terminal processes input in order and answers in order, so one round trip collects whichever of them it implements, while asking separately costs one full timeout per query for nothing.
+
+Pair them with a barrier. Silence is how a terminal says "I do not implement that" — and silence is also what a slow ssh link, a loaded machine and a filtering multiplexer look like. A Primary Device Attributes request (`CSI c`) sent immediately after the queries is answered by every terminal since the VT100, so if its reply arrives and a size report did not, the terminal has demonstrably had its chance. That turns a guess into a conclusion, except inside a multiplexer, which answers the barrier itself.
+
+Whatever you send, read every reply you provoked. An unread reply does not evaporate: it waits in the pty buffer and is delivered to whatever runs next, which is usually the user's shell, which prints it as stray text like `4;1080;1920t`.
+'''
+
+payload = '''
+A cell size can be had by division when nothing reports one: the text area in pixels divided by the text area in cells. It is accurate to a pixel or two, depending on how much padding the terminal keeps around its glyphs, and it is the reason `CSI 14 t` is worth asking for even when `CSI 16 t` is what you actually wanted.
+
+Watch for zeroes. xterm's own documentation notes that "some terminals return 0 for the width and height values" and that such terminals should be modified; until they are, a zero is a terminal declining to answer rather than a window with no pixels in it, and dividing by it is the obvious accident.
+
+Note also what `CSI 14 t` measures: the **text area**, not the window. The frame the window manager draws and the space a scroll bar occupies both fall outside it. `CSI 14 ; 2 t` is the variant that includes them, and on a typical desktop the two differ by tens of pixels.
+'''
+
+security = '''
+These queries only read, and what they read is not sensitive: the size of a window is visible to anyone who can see the screen. There is no state to change and nothing to restore afterwards.
+
+The one hazard belongs to whoever reads the terminal next. A program that sends a query and exits before the answer arrives leaves the reply to be read as keyboard input — at best stray text on the prompt, at worst a line the shell is willing to run if it happens to be followed by a newline. Drain what you provoke. These particular replies are digits, semicolons and a `t`, which is why they show up as visible junk rather than as anything more exciting.
+'''
+
+caveats = '''
+* **`CSI 16 t` is the one to expect silence from.** Alacritty, VTE (and so GNOME Terminal), iTerm2, Warp, st and GNU Screen all lack it, while every one of them except st and Screen answers `CSI 14 t`. iTerm2 has a proprietary alternative, `OSC 1337 ReportCellSize`, implemented by iTerm2 and Konsole and nothing else.
+* **Zero is an answer some terminals give.** Inside tmux, `CSI 16 t` is answered unconditionally from tmux's own state, so when tmux does not know the cell size the reply is a well-formed `CSI 6 ; 0 ; 0 t` rather than silence. Treat a zero as "declined to answer" — xterm's documentation says as much — because the alternative is a division by zero or an image scaled to nothing.
+* **A number that came back is not necessarily a measurement.** Windows Terminal and conhost answer `CSI 16 t` with a *constant* 10 by 20 (9 by 20 at conformance level 1) and derive their `CSI 14 t` answer from it, so both replies are fiction that never reflects the font. Warp reports logical rather than physical pixels, so its numbers are off by the display's scale factor. Rio formats its cell size from floating-point metrics and can emit a fractional parameter such as `CSI 6 ; 16.5 ; 8.25 t`, which a strict integer parser will reject.
+* **wayst gets it actively wrong.** It sends `CSI 4 ; width ; height ; t` and `CSI 8 ; cols ; rows ; t` — the parameters swapped relative to every other terminal, with a spurious trailing semicolon — and `CSI 16 t` falls through to its window-resize handler, so *asking for the cell size resizes the window to 16 lines*. A query is not always harmless.
+* **A multiplexer answers these queries itself.** tmux replies to all three from its own emulator and never forwards them; Zellij answers `CSI 18 t` itself but relays `CSI 14 t` and `CSI 16 t` to the outer terminal; Screen implements only `CSI 18 t`. So a pixel size obtained inside a multiplexer is the multiplexer's idea of the pane — which is the size an application drawing there actually has, but not what the real window measures.
+* **A multiplexer also answers the barrier itself**, so inside one a missing size report proves nothing about the terminal underneath. The honest verdict there is "unknown", not "unsupported".
+* **The two cell sources can disagree.** `TIOCGWINSZ` and `CSI 18 t` are updated by different paths, and after a resize one can be a window behind the other. When they differ, the ioctl is the number every other program on that pty will also see.
+* **The ioctl's pixel fields are often zero until the first resize.** node-pty (so VS Code), Warp and foot all start a child with zeroes and fill them in when the window is next configured; Contour deliberately pushes the size in before forking to avoid exactly this. A zero early in a program's life may become a real number later.
+* **`CSI 19 t` is not the window.** It reports the size of the whole screen in characters, which is what you would want to know before resizing, and is never the answer to "how much room do I have".
+* **Other window operations share the final `t`.** `CSI 3 ; x ; y t` moves the window and `CSI 8 ; height ; width t` resizes it, which is why xterm ships with `allowWindowOps` disabled — though the size reports are exempt from that default, since xterm's `disallowedWindowOps` list does not name them. In xterm, `CSI 16 t` exists only in builds with `OPT_MAXIMIZE`.
+* **A resize can be pushed instead of polled.** kitty and Ghostty implement in-band resize notifications (private mode 2048), where the terminal sends `CSI 48 ; rows ; cols ; height ; width t` on every resize and nothing has to ask. It is the better mechanism where it exists, and it does not exist in many places yet.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+name = "Text area in characters"
+purpose = "How many columns and rows there are, from the terminal itself rather than from the pty."
+request = "CSI 18 t"
+reply = "CSI 8 ; rows ; cols t"
+notes = '''Rows before columns. This is the same pair `TIOCGWINSZ` reports in `ws_row` and `ws_col`, by a slower route — worth asking when the ioctl is unavailable, or when you want to see whether the two agree. Widely implemented, tmux and Zellij included, which answer from their own emulator.'''
+
+[[sequence]]
+name = "Text area in pixels"
+purpose = "How big the text area is in pixels, which divided by the grid gives the size of a cell."
+request = "CSI 14 t"
+reply = "CSI 4 ; height ; width t"
+notes = '''Height before width. This measures the text area rather than the window: the frame and the scroll bar are outside it, and `CSI 14 ; 2 t` is the variant that includes them. Better supported than `CSI 16 t`, which makes it the usual route to a cell size.'''
+
+[[sequence]]
+name = "Cell size in pixels"
+purpose = "How big one character cell is, exactly, with nothing to divide."
+request = "CSI 16 t"
+reply = "CSI 6 ; height ; width t"
+notes = '''Height before width. This is the number applications actually want and the query terminals most often skip — Alacritty, VTE and iTerm2 among them. Always have a fallback: divide `CSI 14 t` by `CSI 18 t`, and failing that assume something plausible and say out loud that you assumed.'''
+
+[[sequence]]
+name = "Screen size in characters"
+purpose = "How big the whole screen is in characters — not the window."
+request = "CSI 19 t"
+reply = "CSI 9 ; rows ; cols t"
+notes = '''Included because it is easy to reach for by mistake. It answers "how large could this window be", not "how large is it". Support is patchier than for the other three.'''
+
+[[sequence]]
+name = "Cell size, iTerm2's way"
+purpose = "iTerm2's proprietary substitute for CSI 16 t."
+request = "OSC 1337 ; ReportCellSize ST"
+reply = "OSC 1337 ; ReportCellSize = height ; width [ ; scale ] ST"
+notes = '''Height before width here too, as decimal fractions rather than integers. Newer iTerm2 versions append a scale factor, which is how a Retina display says that one cell is more device pixels than its logical size suggests. Nothing but iTerm2 implements this, so send it only after `CSI 16 t` has gone unanswered.'''
+
+[[sequence]]
+name = "The barrier"
+purpose = "Not a size query: the sequence that makes silence mean something."
+request = "CSI c"
+reply = "CSI ? 62 ; 4 c"
+notes = '''Primary Device Attributes, answered by every terminal since the VT100. Sent immediately after the size queries, its reply proves the terminal has already processed them — so a size report that has not arrived by then is one the terminal does not implement. A multiplexer answers this from its own emulator, which is exactly why it cannot license that conclusion from inside one.'''
+
+# ---------------------------------------------------------------------------
+# Parameters: the `Ps` values of `CSI Ps t` that ask a question.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "14"
+applies_to = "CSI Ps t"
+default = ""
+description = "Report the text area size in pixels. Answered `CSI 4 ; height ; width t`."
+
+[[param]]
+key = "14 ; 2"
+applies_to = "CSI Ps ; Ps t"
+default = ""
+description = "Report the whole window size in pixels, frame and scroll bar included. Answered in the same `CSI 4 ; height ; width t` form as plain `14`, so the two cannot be told apart in the reply — ask one at a time."
+
+[[param]]
+key = "16"
+applies_to = "CSI Ps t"
+default = ""
+description = "Report the character cell size in pixels. Answered `CSI 6 ; height ; width t`."
+
+[[param]]
+key = "18"
+applies_to = "CSI Ps t"
+default = ""
+description = "Report the text area size in characters. Answered `CSI 8 ; rows ; cols t`."
+
+[[param]]
+key = "19"
+applies_to = "CSI Ps t"
+default = ""
+description = "Report the screen size in characters. Answered `CSI 9 ; rows ; cols t`."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "kitty graphics protocol"
+kind = "protocol"
+url = "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+notes = "Needs a cell size to place an image over a given number of cells, and documents `CSI 16 t` with `CSI 14 t` as the fallback."
+
+[[user]]
+name = "chafa"
+kind = "application"
+url = "https://hpjansson.org/chafa/"
+notes = "Queries the cell size to pick a symbol scale and to size its Sixel and kitty output."
+
+[[user]]
+name = "Notcurses"
+kind = "library"
+url = "https://nick-black.com/dankwiki/index.php/Notcurses"
+notes = "Probes cell geometry at startup, and carries per-terminal workarounds for the terminals that will not answer."
+
+[[user]]
+name = "crossterm"
+kind = "library"
+url = "https://docs.rs/crossterm/latest/crossterm/terminal/fn.window_size.html"
+notes = "Exposes all four `TIOCGWINSZ` fields, and documents that the pixel pair may be zero or unimplemented — the escape-sequence fallback is left to the caller."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# For this feature `partial` almost always means the same thing: the terminal
+# answers some of the three queries and not others, which is the normal state of
+# affairs rather than an unusual one.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "xterm"
+status = "yes"
+notes = "The origin of all three reports, and the source of the documentation everyone else works from. Two nuances: `CSI 16 t` is compiled in only under `OPT_MAXIMIZE`, and the ioctl's pixel fields cover the full window including the inner border and scroll bar while `CSI 14 t` reports the text area, so the two differ by roughly twice the border width."
+source = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+notes = "All three, answered from one function, plus real pixel dimensions on the pty — so on kitty no query is needed at all. Also implements in-band resize notifications, private mode 2048."
+source = "https://github.com/kovidgoyal/kitty/blob/master/kitty/screen.c"
+
+[[support]]
+terminal = "ghostty"
+status = "yes"
+since = "1.0"
+notes = "All three, with unit tests asserting the exact reply bytes. Also implements in-band resize notifications, private mode 2048."
+source = "https://github.com/ghostty-org/ghostty/blob/main/src/terminal/size_report.zig"
+
+[[support]]
+terminal = "foot"
+status = "yes"
+notes = "The full window-operations block, documented in `foot-ctlseqs.7`, and pixel dimensions on the pty. The very first size a child sees is 24 by 80 with zero pixels, before the Wayland surface has been configured; the real one follows immediately."
+source = "https://codeberg.org/dnkl/foot/src/branch/master/doc/foot-ctlseqs.7.scd"
+
+[[support]]
+terminal = "konsole"
+status = "yes"
+notes = "All three, correctly, plus iTerm2's `OSC 1337 ReportCellSize` (with the scale factor hardcoded to 1.0) and real content-rectangle pixels on the pty. The most complete implementation in this table."
+source = "https://invent.kde.org/utilities/konsole/-/blob/master/src/Vt102Emulation.cpp"
+
+[[support]]
+terminal = "wezterm"
+status = "yes"
+notes = "All three, and pixel dimensions on the pty. Its `CSI 16 t` answer is the window pixels divided by the grid rather than a font metric, so it can be a pixel out."
+source = "https://github.com/wezterm/wezterm/blob/main/term/src/terminalstate/mod.rs"
+
+[[support]]
+terminal = "contour"
+status = "yes"
+notes = "All three, with `CSI 14 ; 2 t` for the window rather than the text area. Pushes the pixel size into the pty before forking, so a child is born knowing it rather than learning it on the first resize."
+source = "https://github.com/contour-terminal/contour/blob/master/src/vtbackend/Screen.cpp"
+
+[[support]]
+terminal = "rio"
+status = "yes"
+since = "0.1.11"
+notes = "All three, and pixel dimensions on the pty. Its cell size is formatted from floating-point metrics, so the reply can carry a fractional parameter such as `CSI 6 ; 16.5 ; 8.25 t` — legal-looking, and rejected by a parser expecting integers."
+source = "https://github.com/raphamorim/rio/blob/main/rio-vt/src/performer/handler.rs"
+
+[[support]]
+terminal = "vscode"
+status = "yes"
+notes = "xterm.js implements all three but gates them behind its `windowOptions` setting, which is empty by default; VS Code switches on exactly the three size reports. Pixel dimensions reach the pty through node-pty, but only from the first resize onward. Bare xterm.js answers none of them out of the box, and a headless instance can only ever answer `CSI 18 t`."
+source = "https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts"
+
+[[support]]
+terminal = "alacritty"
+status = "partial"
+since = "0.6.0"
+notes = "Answers `CSI 14 t` and `CSI 18 t`, and does not implement `CSI 16 t` — the parser in the `vte` crate sends 16 to its unhandled branch. Sets the pty's pixel fields, so the ioctl is the better route here anyway."
+source = "https://github.com/alacritty/vte/blob/master/src/ansi.rs"
+
+[[support]]
+terminal = "iterm2"
+status = "partial"
+notes = "Answers `CSI 14 t` and `CSI 18 t`. Its `CSI t` handler has no case for 16 at all, and offers `OSC 1337 ReportCellSize` instead — height, then width, then a scale factor, as decimal points rather than pixels."
+source = "https://github.com/gnachman/iTerm2/blob/master/sources/VT100/VT100CSIParser.m"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "partial"
+notes = "VTE answers `CSI 14 t` and `CSI 18 t`; its window-operation enum has no value 16, so `CSI 16 t` is dropped. Two further catches: the `CSI 14 t` answer uses unscaled cell metrics and is therefore wrong when `font-scale` is not 1, and the pty's pixel fields are set only in builds with sixel support, which is off by default and off in the mainstream distribution packages."
+source = "https://gitlab.gnome.org/GNOME/vte/-/blob/master/src/vteseq.cc"
+
+[[support]]
+terminal = "windows-terminal"
+status = "partial"
+since = "2024-07"
+notes = "Answers all three, but both pixel answers are invented: `CSI 16 t` returns a constant 10 by 20 regardless of the font, and `CSI 14 t` is that constant multiplied by the grid. ConPTY has no pixel field, so the ioctl route does not exist on Windows at all."
+source = "https://github.com/microsoft/terminal/blob/main/src/terminal/adapter/adaptDispatch.cpp"
+
+[[support]]
+terminal = "warp"
+status = "partial"
+notes = "Answers `CSI 14 t` and `CSI 18 t`, and sends 16 to its unhandled branch. Its pixel values are logical rather than physical, so they are off by the scale factor on a fractionally-scaled display. The pty's pixel fields start at zero and are filled in on the first resize."
+source = "https://github.com/warpdotdev/Warp/blob/main/app/src/terminal/model/grid/ansi_handler.rs"
+
+[[support]]
+terminal = "st"
+status = "no"
+notes = "`csihandle` has no case for a final `t` at all: `CSI 18 t` prints an unknown-sequence complaint and never replies. It does set the pty's pixel fields, though, which makes st the clearest illustration of why the ioctl comes first — it is the only channel that works here."
+source = "https://git.suckless.org/st/file/st.c.html"
+
+[[support]]
+terminal = "wayst"
+status = "partial"
+notes = "Answers `CSI 14 t` and `CSI 18 t` with the two parameters swapped relative to every other terminal and a spurious trailing semicolon, so a strict parser rejects both. `CSI 16 t` has no case and falls into the resize handler, which resizes the window to 16 lines. Sets the pty's pixel fields correctly."
+source = "https://github.com/91861/wayst/blob/master/src/vt_core.c"
+
+[[support]]
+terminal = "tmux"
+status = "partial"
+since = "3.1"
+notes = "Answers all three from its own emulator and forwards none of them. `CSI 18 t` is the pane in cells and is reliable; `CSI 14 t` and `CSI 16 t` are answered unconditionally, so when tmux does not know a cell size the reply is `CSI 6 ; 0 ; 0 t` rather than silence. tmux learns the numbers by sending `CSI 18 t` and `CSI 14 t` to the outer terminal itself — never `CSI 16 t` — and dividing, and passes the result down to each pane's pty."
+source = "https://github.com/tmux/tmux/blob/master/input.c"
+
+[[support]]
+terminal = "zellij"
+status = "partial"
+since = "0.28.1"
+notes = "Answers `CSI 18 t` itself from the pane grid, and — unlike tmux — relays `CSI 14 t` and `CSI 16 t` to the outer terminal, synthesising an answer from cache when it has one. The pty's pixel fields have been set since 0.35.1."
+source = "https://github.com/zellij-org/zellij/blob/main/zellij-server/src/panes/grid.rs"
+
+[[support]]
+terminal = "screen"
+status = "partial"
+notes = "Implements `CSI 18 t` and neither pixel query, and never sets the pty's pixel fields, so inside Screen a pixel size is genuinely unobtainable. It also answers device queries out of order relative to the barrier, which makes probing inside it unreliable whatever it implements."
+source = "https://cgit.git.savannah.gnu.org/cgit/screen.git/tree/src/ansi.c"
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "xterm control sequences — window manipulation (dtterm)"
+url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[resource]]
+title = "tty_ioctl(4) — TIOCGWINSZ and the struct winsize it fills in"
+url = "https://man7.org/linux/man-pages/man4/tty_ioctl.4.html"
+
+[[resource]]
+title = "kitty graphics protocol — how it says to find the cell size"
+url = "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+
+[[resource]]
+title = "iTerm2 proprietary escape codes, including ReportCellSize"
+url = "https://iterm2.com/documentation-escape-codes.html"
+
+[[resource]]
+title = "foot's control sequence reference — the clearest complete list of the window operations"
+url = "https://codeberg.org/dnkl/foot/src/branch/master/doc/foot-ctlseqs.7.scd"
+
+[[resource]]
+title = "In-band resize notifications (private mode 2048), the push alternative to asking"
+url = "https://gist.github.com/rockorager/e695fb2924d36b2bcf1fff4a3704bd83"

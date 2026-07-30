@@ -1,0 +1,246 @@
+# escapade doctor — the checks
+#
+# Three independent sources describe a terminal's capabilities, and they
+# routinely disagree:
+#
+#   terminfo    what the database entry for $TERM claims. Often stale, often
+#               for a different terminal than the one actually running.
+#   terminal    what the terminal says about itself, via XTGETTCAP
+#               (DCS + q <hex> ST) and the mode/attribute queries.
+#   observed    what happens when you actually do the thing and measure it.
+#   env         what an environment variable asserts. Present-and-nonempty is
+#               a claim; absence is not, so a missing variable stays silent.
+#
+# One [[check]] per capability where those sources genuinely diverge in the
+# field and where the divergence has a practical consequence.
+#
+# Conventions (see ../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose.
+#   * Write sequences symbolically: ESC, CSI, OSC, DCS, ST, BEL — never embed
+#     a real 0x1b byte. `escapade` prints these as text, and a literal control
+#     byte here would be executed by the reader's terminal instead. A test
+#     enforces this.
+#
+# Fields
+# ------
+#   id          kebab-case, and what `--only` matches
+#   name        display name
+#   question    the question the check answers, one sentence
+#   kind        how the sources' answers are compared:
+#                 boolean   present or absent (the default)
+#                 value     the capability's value itself, normalised
+#                 identity  a terminal family name
+#   terminfo    capability specs to read from the entry. Absence of every one
+#               of them is a negative claim: a terminfo entry is meant to
+#               describe the terminal exhaustively.
+#   xtgettcap   capability names to ask the terminal for, one query each. They
+#               are deliberately not batched: xterm documents that an invalid
+#               name "ends processing of the list of names", so one unknown
+#               name in a batch silently truncates every name after it.
+#   env         environment variables that assert the capability
+#   observed    which observed probe runs, naming a variant of ObservedProbe
+#               in src/features/doctor/observe.rs
+#   mode        DEC private mode number, required by and only by observed =
+#               "decrqm"
+#   notes       what a disagreement here means in practice
+#
+# A capability spec is either a bare name, or `Name>=N` for a numeric
+# capability that must reach a threshold. `TN` resolves to the entry's own
+# name, which is what XTGETTCAP's `TN` means too.
+
+# ---------------------------------------------------------------------------
+
+[[check]]
+id = "truecolor"
+name = "24-bit colour"
+question = "Can this terminal show an arbitrary RGB value, or does it quantise?"
+kind = "boolean"
+terminfo = ["RGB", "Tc", "setrgbf", "colors>=16777216"]
+xtgettcap = ["RGB", "Tc", "Co>=16777216"]
+env = ["COLORTERM"]
+observed = "sgr-readback"
+notes = '''
+The observed test is the only one of the four that measures anything. It sets an
+unusual foreground with `CSI 38 ; 2 ; 1 ; 2 ; 3 m`, asks for the graphic
+rendition back with DECRQSS (`DCS $ q m ST`), and looks at what comes back: a
+terminal that really keeps 24 bits reports the triple 1;2;3, and one that
+quantised to the 256-colour cube reports an index instead.
+
+The usual disagreement is `COLORTERM=truecolor` against a terminfo entry with
+neither `RGB` nor `Tc`. That combination is what makes libraries guess, and the
+guess is why gradients band on some machines and not others. Note that
+`colors#256` is not evidence against truecolor: ncurses uses `colors` for the
+palette size and signals direct colour separately with `RGB`.
+'''
+
+[[check]]
+id = "alt-screen"
+name = "Alternate screen"
+question = "Does switching to the alternate screen preserve the user's scrollback?"
+kind = "boolean"
+terminfo = ["smcup", "rmcup"]
+xtgettcap = ["smcup", "rmcup"]
+observed = "decrqm"
+mode = 1049
+notes = '''
+Nearly every terminfo entry has `smcup`/`rmcup`, so this check is mostly a
+control: the three sources should agree, and a row that disagrees says something
+is badly wrong with the entry.
+
+The two are not the same mechanism, though. `smcup` in many entries is mode 1049
+plus a title-stack push (`CSI 22 ; 0 ; 0 t`); DECRQM 1049 asks only about the
+buffer switch. A terminal can implement mode 1049 and ignore the title stack, and
+an application that trusted `smcup` to restore its title would then be wrong.
+'''
+
+[[check]]
+id = "bracketed-paste"
+name = "Bracketed paste"
+question = "Does pasted text arrive fenced, so it cannot be mistaken for typing?"
+kind = "boolean"
+terminfo = ["BE", "BD", "PS", "PE"]
+xtgettcap = ["BE", "BD"]
+observed = "decrqm"
+mode = 2004
+notes = '''
+`BE`, `BD`, `PS` and `PE` are ncurses *user-defined* extensions, so they are only
+visible with `infocmp -x`. A tool reading the entry through a library that drops
+extensions sees nothing here and concludes bracketed paste is unavailable — which
+is the most common way this capability gets lost.
+
+Getting it wrong is a security problem rather than a cosmetic one: without the
+fence, a paste containing a newline is executed as a command.
+'''
+
+[[check]]
+id = "synchronized-output"
+name = "Synchronized output"
+question = "Can a frame be buffered and presented at once, so animation does not tear?"
+kind = "boolean"
+observed = "decrqm"
+mode = 2026
+notes = '''
+This is the check where the finding is the gap itself, so two of its four columns
+are deliberately empty rather than negative. **There is no terminfo capability for
+DEC private mode 2026, and no XTGETTCAP name for it either.**
+
+The one capability that sounds like it — kitty's `Sync` extension — describes a
+*different* mechanism, the older `DCS = 1 s ST` / `DCS = 2 s ST` pair. A terminal
+can implement mode 2026 and have no `Sync`, or have `Sync` and not mode 2026, so
+reading the absence of `Sync` as a claim about mode 2026 would be attributing an
+opinion to a source that never had one. That is why this row says `n/a` where a
+lazier reading would say `no`.
+
+What is left is DECRQM, alone, which is exactly why the sentinel matters: on a
+terminal that answers DECRQM for modes it has never heard of, this row is
+unknowable rather than negative.
+'''
+
+[[check]]
+id = "clipboard"
+name = "OSC 52 clipboard"
+question = "Can an application put text on the system clipboard?"
+kind = "boolean"
+terminfo = ["Ms"]
+xtgettcap = ["Ms"]
+observed = "none"
+notes = '''
+No observed test is offered, and the absence is deliberate rather than an
+omission. Writing to the clipboard to see whether it worked would destroy
+whatever the user had copied, and reading it back — `OSC 52 ; c ; ? ST` — is
+refused by most terminals precisely because a program that can read your
+clipboard is a program that can read your passwords.
+
+So this capability can only be *claimed*, never measured, and a terminfo `Ms`
+that the terminal disowns is the whole answer available. Note that many terminals
+implement OSC 52 but only for writing, and several gate it behind a setting, so
+even agreement here does not promise a paste will land.
+'''
+
+[[check]]
+id = "backspace"
+name = "Backspace key"
+question = "Does terminfo agree with the line discipline about which byte erases?"
+kind = "value"
+terminfo = ["kbs"]
+xtgettcap = ["kbs"]
+observed = "stty-erase"
+notes = '''
+The classic terminfo-versus-reality mismatch, and the reason `^H` litters some
+sessions and `^?` litters others. `kbs` claims which byte the Backspace key
+sends; the terminal driver's `erase` character says which byte the line
+discipline will act on. When they differ, Backspace stops working in cooked mode
+and readline-based programs bind the wrong key.
+
+The observed source here is the tty's own `erase` setting, read with `stty -a`.
+That is a genuine third source — it is what actually happens to the byte — but it
+is one step removed from the terminal: it reports the driver's configuration, not
+what the key emits. A terminal sending `^?` into a driver configured for `^H` is
+the disagreement this row is looking for.
+'''
+
+[[check]]
+id = "mouse"
+name = "Mouse reporting"
+question = "Can this terminal report mouse events in SGR encoding?"
+kind = "boolean"
+terminfo = ["XM", "xm", "kmous"]
+xtgettcap = ["XM", "kmous"]
+observed = "decrqm"
+mode = 1006
+notes = '''
+`XM` and `xm` are ncurses extensions describing how to switch mouse reporting on
+and how the reports are shaped; `kmous` is the standard capability, and its
+presence alone means only that *some* mouse encoding exists, not the SGR one.
+Mode 1006 is the SGR encoding specifically, which is the one that still works
+past column 223.
+
+The observed source reads mode 1006 back rather than waiting for a click, so it
+measures the terminal's own record of the mode rather than a report. Provoking a
+real SGR report would need the user to move the mouse, which a diagnostic has no
+business demanding.
+'''
+
+[[check]]
+id = "cell-size"
+name = "Cell size in pixels"
+question = "How many pixels is one character cell, for sizing images correctly?"
+kind = "boolean"
+observed = "cell-size"
+notes = '''
+Another check whose finding is a gap: terminfo has no capability for pixel
+geometry at all, and neither does XTGETTCAP, so observation is the only source
+there is. A row where two of three columns can never be filled is still worth
+printing, because "nobody can tell you this except by measuring" is the answer.
+
+The measurement is a ladder, because no single query is portable. `CSI 16 t` is
+the direct question and is skipped by Alacritty, VTE and iTerm2. iTerm2 answers
+its own `OSC 1337 ; ReportCellSize ST`. Failing both, `CSI 14 t` gives the text
+area in pixels and `CSI 18 t` gives it in characters, and dividing one by the
+other recovers the cell. Which rung answered is reported, since that identifies
+the terminal family as surely as any version string.
+'''
+
+[[check]]
+id = "identity"
+name = "Terminal identity"
+question = "Do $TERM, TERM_PROGRAM and the terminal's own version string name the same terminal?"
+kind = "identity"
+terminfo = ["TN"]
+xtgettcap = ["TN"]
+env = ["TERM_PROGRAM", "TERM"]
+observed = "identity"
+notes = '''
+Put this row first when reading a disagreement anywhere else, because it is
+usually the cause. `TERM` is set by whatever launched the shell and is wrong more
+often than any other variable — `xterm-256color` is the near-universal lie, set
+by terminals that are not xterm so that the entry they know exists everywhere
+gets loaded. Every terminfo claim in this report is only as good as this row.
+
+The observed source is XTVERSION (`CSI > 0 q`, answered `DCS > | <name and
+version> ST`), backed by Primary and Secondary Device Attributes. XTVERSION is
+the only one of the three that the terminal composes itself, so where it
+disagrees with `TERM` it is the one to believe. Under a multiplexer all of them
+name the multiplexer, which is correct and not a disagreement: the multiplexer is
+the terminal, as far as the escape sequences are concerned.
+'''

@@ -1,0 +1,298 @@
+# Glyph Protocol
+#
+# One file per terminal feature. Everything `escapade <feature> explain` prints
+# comes from here, so prose edits need no Rust changes.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslashes
+#     sequences survive verbatim.
+#   * Write sequences symbolically: ESC, CSI, ST, BEL — never embed a real
+#     0x1b byte in this file. `escapade` prints these as text, and a literal
+#     control byte here would be executed by the reader's terminal instead.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+
+id = "glyph-protocol"
+name = "Glyph Protocol"
+tagline = "Applications ship their own vector glyphs to the terminal at runtime, instead of asking users to install a patched font."
+status = "experimental"
+author = "Raphael Amorim"
+introduced = "2026-04"
+transport = "APC"
+spec_url = "https://rapha.land/introducing-glyph-protocol-for-terminals/"
+# Per the changelog on the spec page, latest entry dated 2026-05-03.
+# Re-check this when updating the file.
+spec_version = "1.9"
+examples_url = "https://github.com/raphamorim/glyph-protocol-examples"
+
+summary = '''
+Terminal applications that want an icon have exactly one option today: pick a codepoint in a Private Use Area, and hope the user installed a font that has something at that codepoint. That is what **Nerd Fonts** is — a social contract backed by patched font files, distributed out of band, that every user must set up before your prompt renders correctly. Get it wrong and the user sees *tofu*: the empty box □ that gives this protocol its identifier.
+
+Glyph Protocol turns that convention into a mechanism. An application can:
+
+* **ask** whether the terminal speaks the protocol at all,
+* **ask** whether a given codepoint already renders — from the system font, from this session's registrations, or not at all,
+* **register** a vector outline for a codepoint, for the lifetime of the session,
+* **clear** what it registered.
+
+The glyph travels with the application. No font installation, no user setup, and no guessing about whether U+E0A0 happens to be a branch icon on this machine.
+'''
+
+problem = '''
+The alternative people reach for is the kitty graphics protocol with Unicode placeholders, and it does work — but it is images, not text. Every reuse of the same icon on screen carries layout and compositing cost, the integration is fiddly, and only kitty, Ghostty and Rio implement placeholders at all.
+
+Once Glyph Protocol registers a codepoint, the terminal draws it through the same glyph cache it uses for ordinary text. An icon repeated 200 times down a file tree costs what a repeated letter costs.
+'''
+
+how_it_works = '''
+Every message is an **APC** (Application Program Command) string:
+
+```
+ESC _ 25a1 ; <verb> [ ; key=value ]* [ ; <payload> ] ST
+```
+
+where `ST` is the string terminator `ESC \`. The `25a1` prefix is the hex codepoint of U+25A1 WHITE SQUARE — tofu, the thing the protocol exists to prevent.
+
+APC is the load-bearing choice here. A terminal that has never heard of Glyph Protocol **drops the whole string silently**: no stray characters, no corrupted line, no garbage in your scrollback. That is what makes it safe to speak the protocol optimistically and fall back on silence.
+'''
+
+payload = '''
+Glyphs ship as **TrueType simple-glyph outlines** (the raw contents of a `glyf` table entry), base64-encoded. A typical icon is 150–400 bytes of `glyf` data, which is 2–3× smaller than the equivalent SVG including base64 overhead.
+
+The accepted subset is deliberately small:
+
+* simple glyphs only — no composite glyphs, no font-level context
+* standard OpenType flag encoding for points
+* no hinting instructions
+* coordinates live in the space set by `upm`
+
+A contour is a list of on-curve and off-curve points. Two on-curve points in a row draw a straight line. An off-curve point between two on-curve points draws a quadratic Bézier, with the off-curve point as its control point. That is the entire geometry model.
+
+`upm` (units per em, default 1000) defines the coordinate space the terminal maps onto its cell at render time. An icon authored at `upm=1000` scales cleanly to an 8×16 cell and to a 32×64 cell, so applications never need to know the cell size or re-register when the font size changes.
+
+Two colour formats were added in spec v1.2 and are advertised separately: `colrv0` for layered flat-colour glyphs and `colrv1` for the full paint graph with gradients, affine transforms and composite modes. Both wrap the outlines and the OpenType `COLR`/`CPAL` tables in a small length-prefixed container.
+
+Nobody is expected to hand-write `glyf` bytes. The normal path is to author SVG and convert at build time — `fonttools` does this through its ttx/pens interface, and a small `svg2glyf` helper ships alongside Rio's reference implementation.
+'''
+
+security = '''
+Two design decisions carry the entire trust model:
+
+**The cell buffer stays authoritative.** Selection, copy, search, hyperlink detection and shell history all return the codepoint the application emitted, never the glyph that was drawn. An application cannot use this protocol to build a *what you see is not what you copy* trap.
+
+**Registration is confined to the Private Use Areas** — U+E000–U+F8FF, U+F0000–U+FFFFD and U+100000–U+10FFFD. Custom glyphs can never be drawn over real text, so "register a lookalike for `l` and phish someone" is not a mitigated risk, it is mechanically impossible. Anything outside those ranges is rejected with `reason=out_of_namespace`.
+
+Sessions are isolated: two tabs can register U+E0A0 as different icons without seeing each other's glossary. Each session holds at most **1024** registrations, keyed by codepoint; a 1025th eviction drops the oldest in FIFO order.
+'''
+
+caveats = '''
+* **The glossary is session-scoped.** Registrations vanish when the session ends. Register at startup, and re-register if you care about surviving a terminal restart.
+* **Multiplexers filter APC.** Inside tmux, an unwrapped APC never reaches the outer terminal. tmux needs `set -g allow-passthrough on` and the sequence wrapped in its `DCS tmux;` passthrough form, with every inner ESC doubled.
+* **Query before you assume.** A `q` reply of `status=system` means the user's font already covers that codepoint — registering over it is legal but rude.
+* **Only one terminal implements it so far.** Treat support as something to detect at runtime, never as something to require.
+'''
+
+# ---------------------------------------------------------------------------
+# The four verbs.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+verb = "s"
+name = "Support"
+purpose = "Capability detection. Does this terminal speak Glyph Protocol, and which payload formats does it accept?"
+request = "ESC _ 25a1 ; s ST"
+reply = "ESC _ 25a1 ; s ; fmt=glyf ST"
+notes = '''`fmt` is a comma-separated list of accepted formats: `glyf` (required in v1), `colrv0`, `colrv1`. Order carries no meaning and unrecognised names should be ignored. Silence means no support — pair the query with a sequence the terminal is guaranteed to answer, such as Primary Device Attributes, so you can tell "unsupported" apart from "still in flight".'''
+
+[[sequence]]
+verb = "q"
+name = "Query"
+purpose = "Ask whether a specific codepoint can be rendered right now, and by what."
+request = "ESC _ 25a1 ; q ; cp=E0A0 ST"
+reply = "ESC _ 25a1 ; q ; cp=E0A0 ; status=system ST"
+notes = '''`status` names the sources covering the codepoint: empty (nothing — you would get tofu), `system` (the user's font has it), `glossary` (a registration in this session), or `system,glossary` (both, with the registration shadowing the font). This is how an application decides whether it needs to ship its own icon at all.'''
+
+[[sequence]]
+verb = "r"
+name = "Register"
+purpose = "Install a vector outline for a codepoint, for the rest of the session."
+request = "ESC _ 25a1 ; r ; cp=E0A0 ; upm=1000 ; <base64-glyf> ST"
+reply = "ESC _ 25a1 ; r ; cp=E0A0 ; status=0 ST"
+notes = '''`status=0` is success. Failures carry `reason=<code>`, such as `reason=out_of_namespace` for a codepoint outside the Private Use Areas. Use `reply=0` for fire-and-forget registration at startup when you do not intend to read the answer.'''
+
+[[sequence]]
+verb = "c"
+name = "Clear"
+purpose = "Drop one registration, or the whole session glossary."
+request = "ESC _ 25a1 ; c [ ; cp=E0A0 ] ST"
+reply = "ESC _ 25a1 ; c ; status=0 ST"
+notes = '''With `cp`, clears that codepoint; without it, clears the entire glossary. The terminal acknowledges with `status=0` either way, whether or not anything was actually registered.'''
+
+# ---------------------------------------------------------------------------
+# Parameters.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "cp"
+applies_to = "q, r, c"
+default = ""
+description = "Target codepoint, in hex, without a `U+` prefix. For `r` it must fall inside a Private Use Area."
+
+[[param]]
+key = "fmt"
+applies_to = "s (reply), r"
+default = "glyf"
+description = "Payload format: `glyf`, `colrv0` or `colrv1`. In an `s` reply, a comma-separated list of everything the terminal accepts."
+
+[[param]]
+key = "upm"
+applies_to = "r"
+default = "1000"
+description = "Units per em — the coordinate space the outline is authored in. The terminal maps it onto the cell, so the same payload scales to any font size."
+
+[[param]]
+key = "reply"
+applies_to = "r"
+default = "1"
+description = "Response level: `1` both success and failure, `2` failures only, `0` silent. Unknown values fall back to `1`."
+
+[[param]]
+key = "status"
+applies_to = "q, r, c (replies)"
+default = ""
+description = "For `q`, which sources cover the codepoint. For `r` and `c`, `0` means success."
+
+[[param]]
+key = "reason"
+applies_to = "error replies"
+default = ""
+description = "Machine-readable failure code, e.g. `out_of_namespace`."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "Rio"
+kind = "terminal"
+url = "https://github.com/raphamorim/rio"
+notes = "The reference implementation, by the protocol's author. Ships the `svg2glyf` build-time helper."
+
+[[user]]
+name = "Ratatui"
+kind = "library"
+url = "https://github.com/raphamorim/glyph-protocol-examples"
+notes = "Sample integration in the protocol's examples repository (Rust)."
+
+[[user]]
+name = "Bubble Tea"
+kind = "library"
+url = "https://github.com/raphamorim/glyph-protocol-examples"
+notes = "Sample integration in the protocol's examples repository (Go)."
+
+[[user]]
+name = "Ink"
+kind = "library"
+url = "https://github.com/raphamorim/glyph-protocol-examples"
+notes = "Sample integration in the protocol's examples repository (JavaScript)."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough  multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "rio"
+status = "yes"
+since = "main branch, landed May 2026"
+notes = "First implementation. The exact tagged release is not stated on the spec page — check Rio's changelog and pin this down."
+source = "https://rapha.land/introducing-glyph-protocol-for-terminals/"
+
+[[support]]
+terminal = "kitty"
+status = "no"
+notes = "No known implementation. Supports the kitty graphics protocol with Unicode placeholders, which covers some of the same ground by a different route."
+source = "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+
+[[support]]
+terminal = "ghostty"
+status = "no"
+notes = "No known implementation. Does support kitty graphics Unicode placeholders."
+
+[[support]]
+terminal = "wezterm"
+status = "no"
+
+[[support]]
+terminal = "alacritty"
+status = "no"
+
+[[support]]
+terminal = "foot"
+status = "no"
+
+[[support]]
+terminal = "contour"
+status = "no"
+
+[[support]]
+terminal = "iterm2"
+status = "no"
+
+[[support]]
+terminal = "windows-terminal"
+status = "no"
+
+[[support]]
+terminal = "vscode"
+status = "no"
+
+[[support]]
+terminal = "konsole"
+status = "no"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "no"
+
+[[support]]
+terminal = "xterm"
+status = "no"
+
+[[support]]
+terminal = "tmux"
+status = "passthrough"
+notes = "APC is filtered by default. Needs `set -g allow-passthrough on` plus DCS passthrough wrapping, and the outer terminal must support the protocol."
+
+[[support]]
+terminal = "zellij"
+status = "unknown"
+notes = "Passthrough behaviour for APC has not been verified."
+
+[[support]]
+terminal = "screen"
+status = "unknown"
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "Introducing Glyph Protocol for Terminals — the specification"
+url = "https://rapha.land/introducing-glyph-protocol-for-terminals/"
+
+[[resource]]
+title = "Example integrations for Ratatui, Bubble Tea and Ink"
+url = "https://github.com/raphamorim/glyph-protocol-examples"
+
+[[resource]]
+title = "Rio terminal — the reference implementation"
+url = "https://github.com/raphamorim/rio"
+
+[[resource]]
+title = "OpenType glyf table — the payload format"
+url = "https://learn.microsoft.com/en-us/typography/opentype/spec/glyf"

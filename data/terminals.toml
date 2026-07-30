@@ -1,0 +1,125 @@
+# The terminal registry.
+#
+# Every terminal (and multiplexer) that can appear in a feature support matrix
+# is listed here exactly once. Feature files under `data/features/` reference
+# these entries by `id`, so a terminal's display name and URL live in one place.
+#
+# To add a terminal: append a `[[terminal]]` block. Keep the list roughly
+# ordered by how likely a reader is to care. `id` must be lowercase kebab-case
+# and is what feature files use; it is validated at startup, so a typo in a
+# feature file fails loudly instead of silently vanishing from a table.
+
+[[terminal]]
+id = "rio"
+name = "Rio"
+url = "https://rioterm.com"
+
+[[terminal]]
+id = "kitty"
+name = "kitty"
+url = "https://sw.kovidgoyal.net/kitty/"
+
+[[terminal]]
+id = "ghostty"
+name = "Ghostty"
+url = "https://ghostty.org"
+
+[[terminal]]
+id = "wezterm"
+name = "WezTerm"
+url = "https://wezfurlong.org/wezterm/"
+
+[[terminal]]
+id = "alacritty"
+name = "Alacritty"
+url = "https://alacritty.org"
+
+[[terminal]]
+id = "foot"
+name = "foot"
+url = "https://codeberg.org/dnkl/foot"
+
+[[terminal]]
+id = "contour"
+name = "Contour"
+url = "https://contour-terminal.org"
+
+[[terminal]]
+id = "iterm2"
+name = "iTerm2"
+url = "https://iterm2.com"
+
+[[terminal]]
+id = "windows-terminal"
+name = "Windows Terminal"
+url = "https://github.com/microsoft/terminal"
+
+[[terminal]]
+id = "vscode"
+name = "VS Code terminal"
+url = "https://code.visualstudio.com/docs/terminal/basics"
+
+[[terminal]]
+id = "konsole"
+name = "Konsole"
+url = "https://konsole.kde.org"
+
+[[terminal]]
+id = "gnome-terminal"
+name = "GNOME Terminal / VTE"
+url = "https://gitlab.gnome.org/GNOME/vte"
+
+[[terminal]]
+id = "xterm"
+name = "xterm"
+url = "https://invisible-island.net/xterm/"
+
+# Multiplexers sit between an application and the real terminal, so they get
+# their own rows: a feature can be unsupported purely because the multiplexer
+# filters the sequence out.
+[[terminal]]
+id = "tmux"
+name = "tmux"
+url = "https://github.com/tmux/tmux"
+kind = "multiplexer"
+
+[[terminal]]
+id = "zellij"
+name = "Zellij"
+url = "https://zellij.dev"
+kind = "multiplexer"
+
+[[terminal]]
+id = "screen"
+name = "GNU Screen"
+url = "https://www.gnu.org/software/screen/"
+kind = "multiplexer"
+
+# Appended for the kitty graphics matrix: two more places the protocol turns up.
+# They sit after the multiplexers only because this file is append-only.
+[[terminal]]
+id = "st"
+name = "st (with the kitty-graphics patch)"
+url = "https://github.com/sergei-grechanik/st-graphics"
+
+[[terminal]]
+id = "warp"
+name = "Warp"
+url = "https://www.warp.dev"
+
+[[terminal]]
+id = "wayst"
+name = "wayst"
+url = "https://github.com/91861/wayst"
+
+# Appended for the progress matrix: the terminal that invented OSC 9 ; 4, and the
+# one that copied it first.
+[[terminal]]
+id = "conemu"
+name = "ConEmu"
+url = "https://conemu.github.io"
+
+[[terminal]]
+id = "mintty"
+name = "mintty"
+url = "https://mintty.github.io"

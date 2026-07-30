@@ -1,0 +1,476 @@
+# Hyperlinks (OSC 8)
+#
+# One file per terminal feature. Everything `escapade hyperlink explain` prints
+# comes from here, so prose edits need no Rust changes.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (''' ... ''') for prose so backslashes in escape
+#     sequences survive verbatim.
+#   * Write sequences symbolically: OSC, ESC, ST, BEL — never embed a real
+#     0x1b byte in this file. `escapade` prints these as text, and a literal
+#     control byte here would be executed by the reader's terminal instead.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+
+id = "hyperlinks"
+name = "Hyperlinks (OSC 8)"
+tagline = "Attach a URL to a run of terminal text, so the text is clickable and the URL never has to be shown."
+author = "Egmont Koblinger, with iTerm2 and VTE"
+status = "de-facto-standard"
+introduced = "2017-09"
+transport = "OSC"
+spec_url = "https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda"
+examples_url = "https://github.com/Alhadis/OSC8-Adoption"
+
+summary = '''
+A terminal cell has always been able to carry attributes: bold, underline, a
+foreground colour. OSC 8 adds one more — a **URI**. Everything printed between
+an opening sequence and a closing one becomes a link, and the terminal takes
+care of hovering, highlighting and opening it.
+
+```
+OSC 8 ; ; https://example.com ST  click me  OSC 8 ; ; ST
+```
+
+The user sees `click me`. The URL is nowhere on screen, which is the whole
+point: a file listing can link every filename without turning into a wall of
+`file:///home/you/...`, and `ls`, `gcc`, `systemd` and `ripgrep` all do exactly
+that today.
+
+Two things make this unusually easy to adopt:
+
+* **There is nothing to detect.** A terminal that has never heard of OSC 8
+  parses the sequence as an OSC string it does not recognise, discards it, and
+  prints the text. You lose the link and keep the output — so applications emit
+  hyperlinks unconditionally, and this is the one feature in `escapade` where
+  probing is a courtesy rather than a requirement.
+* **It is a state attribute, not a container.** Opening a second link without
+  closing the first is legal, and so is closing one that was never open. There
+  is no nesting to get wrong.
+'''
+
+problem = '''
+Terminals have "supported links" for decades by *guessing*: scan the screen for
+something that looks like a URL, underline it, make it clickable. That works
+until it does not, and the failure modes are all familiar.
+
+* A URL wrapped across two lines is two half-URLs, and the pattern matcher sees
+  neither.
+* A trailing full stop, a closing parenthesis or a comma gets swallowed into the
+  link, or truncates it.
+* Only things shaped like URLs can be linked. A filename cannot be, and neither
+  can an issue number, a stack frame or a test name.
+* The URL has to be *visible* to be clickable, so output ends up written for the
+  pattern matcher rather than for the reader.
+
+OSC 8 moves the decision to the program that already knows the answer. `ls`
+knows the absolute path of every entry it prints; `gcc` knows the documentation
+URL for every diagnostic it emits. Neither has to hope a regular expression
+reconstructs it from the rendered output.
+
+Both mechanisms coexist. Terminals keep their pattern matchers for programs that
+do not emit OSC 8 — kitty, for instance, styles real OSC 8 hyperlinks and
+pattern-matched URLs differently, so you can tell which one you are looking at.
+'''
+
+how_it_works = '''
+Hyperlinks are an **OSC** (Operating System Command) string with command number
+`8`:
+
+```
+OSC 8 ; <params> ; <URI> ST
+```
+
+where `OSC` is `ESC ]` and `ST` is the string terminator `ESC \`. Note the
+**two** semicolons: the first ends the command number, the second ends the
+parameter field. With no parameters that field is empty, which is why nearly
+every OSC 8 sequence in the wild begins `OSC 8 ; ;`.
+
+Closing a link is the same sequence with an empty URI:
+
+```
+OSC 8 ; ; ST
+```
+
+Every cell printed while a link is open carries that URI; cells printed after
+the close carry none. Because it is an attribute rather than a region, all of
+the following are well defined:
+
+* switching straight from one link to another without closing the first,
+* closing a link that was not open,
+* a link that spans a newline, a scroll, or the whole visible screen.
+
+`params` is a colon-separated list of `key=value` pairs — `id=xyz:foo=bar`.
+Exactly one key is defined, `id`, and terminals ignore keys they do not know.
+Parameter values may contain neither `:` nor `;`, for the obvious reason.
+
+**Termination.** `ST` (`ESC \`) is the standard terminator and the one to use.
+xterm also accepts a bare `BEL` to end an OSC string, and that spelling spread
+widely enough that essentially every terminal implementing OSC 8 accepts both.
+`BEL` is one byte shorter and much easier to get wrong: on a terminal that does
+not recognise the OSC *and* does not treat `BEL` as a terminator, you have just
+printed a bell character.
+'''
+
+payload = '''
+The URI is the payload, and there are real rules about it.
+
+**Encoding.** Parameters and the URI must contain only bytes in the range
+32–126. Anything outside that range in the URI must be percent-encoded — which
+covers every control byte and, since URIs are ASCII, every non-ASCII character.
+A URI containing a raw `ESC` is not merely invalid, it is escape-sequence
+injection: it ends the OSC string early and hands the remainder of the
+"URI" to the terminal as commands. Percent-encode first, always.
+
+**Schemes.** The terminal decides which schemes it is willing to open. In
+practice `http://`, `https://` and `mailto:` work everywhere, `file://` almost
+everywhere, and `ftp://` sometimes. Anything more exotic is a gamble; several
+terminals open only a whitelist.
+
+**`file://` needs a hostname.** This is the rule people get wrong most often.
+A `file://` URI must carry the hostname, from `gethostname()` or `$HOSTNAME`:
+
+```
+file://myhost/home/you/notes.txt
+```
+
+not `file:///home/you/notes.txt`. The terminal compares that hostname against
+its own and refuses to open the file if they differ — which is exactly what you
+want when the output came from the far end of an ssh connection and the path
+means something entirely different locally. An empty hostname and `localhost`
+are both accepted as "here", so the hostname-less form works on your machine and
+then silently opens the wrong file, on the wrong machine, once ssh is involved.
+
+**Length limits.** VTE and iTerm2 both cap the URI at **2083 bytes** — the old
+Internet Explorer address-bar limit, adopted here because it is as good a number
+as any. VTE additionally caps `id` at **250 bytes**. Over the limit the link is
+dropped; the text still prints.
+'''
+
+security = '''
+Emitting a hyperlink is safe. *Building* one out of untrusted input is where the
+sharp edge is, and it is entirely on the sending side.
+
+**The injection.** The URI and the parameters live inside an OSC string, and an
+OSC string ends at `ST` or `BEL`. If a URI can contain a raw `ESC` or `BEL`, then
+whoever controls that URI controls the terminal: end the OSC string early, and
+everything after it is interpreted as fresh escape sequences. A branch name, a
+filename and an HTTP redirect target are all untrusted input. Percent-encode
+every byte outside 32–126 before it goes on the wire and the attack disappears —
+a percent-encoded `ESC` is the three harmless characters `%1B`.
+
+`escapade` also percent-encodes `;` in URIs it builds. Nothing in the
+specification requires that — the URI is the remainder of the payload, so a `;`
+inside it is legal — but a terminal that splits the OSC payload on every `;`
+rather than on the first two would truncate the target, and `%3B` costs nothing.
+
+**The visible text is not inside the OSC string**, so it needs the opposite
+treatment. It is ordinary terminal output, which means untrusted link text can
+carry its own `OSC 8 ; ; ST` and close the link early, or open a different one
+pointing somewhere else, or simply clear the screen. `escapade` replaces every
+byte in link text that could introduce or terminate an escape sequence with its
+Control Pictures stand-in, so an `ESC` smuggled into a filename shows up as a
+visible glyph instead of executing.
+
+**On the receiving side** the terminal is doing the risky part, and the
+mitigations are conventions rather than mechanisms: open only whitelisted
+schemes, require a modifier-click rather than a plain click, show the target on
+hover before opening it, and let the user turn the feature off entirely. The
+threat is the same one browsers have — the visible text need not resemble the
+target — and so is the defence: show the user where they are about to go.
+'''
+
+caveats = '''
+* **`file://` without a hostname is a trap.** It works on your machine and
+  quietly points at another machine's filesystem over ssh. Always include the
+  hostname.
+* **Copy the text and you get the text.** The URI is a cell attribute; the
+  clipboard carries characters. Copying a hyperlink yields the visible label and
+  loses the target, which is why output meant to be pasted elsewhere should
+  still say the URL out loud.
+* **Give wrapped links an `id`.** Without one, most terminals highlight only the
+  physical row under the pointer, so a link broken across two rows looks like
+  two links. With a matching `id` on both runs they highlight as one.
+* **Mouse capture wins.** While a full-screen application has mouse reporting
+  enabled, clicks go to the application rather than the terminal, so hyperlinks
+  inside a TUI usually need Shift held down to reach the terminal's own link
+  handling. Alacritty is stricter still and ignores OSC 8 entirely while the
+  mouse is grabbed.
+* **`BEL` termination is a footgun on unsupporting terminals.** Prefer `ST`.
+* **Do not assign an `id` unless you need one.** Two runs of cells that share a
+  URI *and* a non-empty `id` are one link. Reusing an id across genuinely
+  unrelated links makes them highlight together, which looks like a bug. Simple
+  filters should leave it out; screen-managing applications should derive it
+  from something unique, and multi-window applications should prefix it per
+  window.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences. OSC 8 has no verbs — there are only two operations, and the
+# variants below are the ones worth seeing spelled out.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+name = "Open a link"
+purpose = "Start a run of cells that carry a URI. Everything printed after this, until the link is closed or replaced, is clickable."
+request = "OSC 8 ; ; https://example.com ST"
+notes = '''The empty field between the two semicolons is the parameter list. It
+is not optional — `OSC 8 ; https://example.com ST` is malformed, and a terminal
+that splits on the first two semicolons reads `https` as a parameter and
+`//example.com` as the URI.'''
+
+[[sequence]]
+name = "Close the link"
+purpose = "Stop attaching a URI to newly printed cells."
+request = "OSC 8 ; ; ST"
+notes = '''An empty URI means "no link", which is why closing looks like opening
+with the target left out. Closing a link that is not open is legal and does
+nothing, so a program that always closes after printing never has to track
+state.'''
+
+[[sequence]]
+name = "Open a link with an id"
+purpose = "Mark separate runs of cells as belonging to the same link, so they highlight together on hover."
+request = "OSC 8 ; id=neighbour-42 ; https://example.com ST"
+notes = '''Cells sharing both the URI and a non-empty `id` hover as one unit,
+even across line breaks — and, in some terminals, across windows. This is the
+fix for a long URL wrapped onto two rows looking like two links. VTE truncates
+`id` at 250 bytes; iTerm2 imposes no limit.'''
+
+[[sequence]]
+name = "Open a link, BEL-terminated"
+purpose = "The xterm spelling of the same thing, one byte shorter."
+request = "OSC 8 ; ; https://example.com BEL"
+notes = '''`BEL` (0x07) as an OSC terminator comes from xterm and is accepted by
+effectively every terminal that implements OSC 8, but `ST` is the standard and
+the safer choice: a terminal that does not recognise the OSC and does not treat
+`BEL` as a terminator will ring the bell instead of swallowing it.'''
+
+[[sequence]]
+name = "Link a local file"
+purpose = "Point at a path on this machine, in a way that does not lie when the output travels over ssh."
+request = "OSC 8 ; ; file://myhost/home/you/notes.txt ST"
+notes = '''The hostname is mandatory. The terminal matches it against its own and
+refuses to open anything belonging to a host it is not running on. Empty and
+`localhost` both mean "here". Percent-encode the path: spaces become `%20`, and
+non-ASCII filenames become their percent-encoded UTF-8 bytes.'''
+
+# ---------------------------------------------------------------------------
+# Parameters.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "URI"
+applies_to = "the field after the second semicolon"
+default = ""
+description = "The link target. Only bytes 32–126 are allowed; everything else must be percent-encoded. Empty means close the link. Capped at 2083 bytes by VTE and iTerm2."
+
+[[param]]
+key = "params"
+applies_to = "the field between the two semicolons"
+default = ""
+description = "Colon-separated `key=value` pairs, e.g. `id=abc:foo=bar`. Values may contain neither `:` nor `;`. Unknown keys are ignored, which is what leaves room for the list to grow."
+
+[[param]]
+key = "id"
+applies_to = "params"
+default = ""
+description = "Groups cells into one logical link. Runs of cells sharing a URI and a non-empty `id` highlight together on hover, across line breaks. Only meaningful when non-empty — leave it out rather than passing an empty value."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "GNU coreutils (ls, dir, vdir)"
+kind = "application"
+url = "https://www.gnu.org/software/coreutils/manual/html_node/General-output-formatting.html"
+notes = "`ls --hyperlink=auto` links every entry to its `file://` URI, hostname included. The canonical demonstration of the feature."
+
+[[user]]
+name = "GCC"
+kind = "application"
+url = "https://gcc.gnu.org/onlinedocs/gcc/Diagnostic-Message-Formatting-Options.html"
+notes = "`-fdiagnostics-urls=auto` turns the option name in a warning into a link to its documentation."
+
+[[user]]
+name = "systemd"
+kind = "application"
+url = "https://systemd.io/"
+notes = "`systemctl`, `journalctl` and friends link unit files and the documentation URLs declared in them."
+
+[[user]]
+name = "ripgrep"
+kind = "application"
+url = "https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md#hyperlinks"
+notes = "`--hyperlink-format` builds a link per match, with `{line}` and `{column}` placeholders, so an editor can jump straight to it."
+
+[[user]]
+name = "delta"
+kind = "application"
+url = "https://dandavison.github.io/delta/hyperlinks.html"
+notes = "Links file paths and commit hashes in diffs, optionally to a repository's web UI."
+
+[[user]]
+name = "eza"
+kind = "application"
+url = "https://github.com/eza-community/eza"
+notes = "`--hyperlink` — the same trick as `ls`, in the modern replacement for it."
+
+[[user]]
+name = "groff"
+kind = "application"
+url = "https://www.gnu.org/software/groff/"
+notes = "Renders the `.UR` and `.MT` man page macros as real hyperlinks, so man pages have working links."
+
+[[user]]
+name = "VTE"
+kind = "library"
+url = "https://gitlab.gnome.org/GNOME/vte"
+notes = "The first widely shipped implementation, and where the specification was written down."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "gnome-terminal"
+status = "yes"
+since = "VTE 0.50 (2017-09)"
+notes = "The reference implementation, and the origin of the specification. Everything built on VTE inherits it: GNOME Terminal, GNOME Console, Tilix, Terminator 2.0+, xfce4-terminal, Guake."
+source = "https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda"
+
+[[support]]
+terminal = "iterm2"
+status = "yes"
+since = "3.1"
+notes = "One of the two implementations the specification's length limits were written around. Imposes no limit on `id`."
+source = "https://iterm2.com/documentation-escape-codes.html"
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+since = "0.19"
+notes = "`underline_hyperlinks` chooses whether real OSC 8 links are underlined on hover, always, or never; `show_hyperlink_targets` reveals the URI before you commit to it. kitty deliberately styles OSC 8 links differently from pattern-matched URLs."
+source = "https://sw.kovidgoyal.net/kitty/conf/#opt-kitty.underline_hyperlinks"
+
+[[support]]
+terminal = "wezterm"
+status = "yes"
+since = "2018"
+notes = "Implements the specification directly, and pairs it with configurable `hyperlink_rules` for pattern-matched links in the output of programs that do not emit OSC 8."
+source = "https://wezterm.org/hyperlinks.html"
+
+[[support]]
+terminal = "foot"
+status = "yes"
+since = "1.7.0 (2021-03)"
+source = "https://github.com/Alhadis/OSC8-Adoption"
+
+[[support]]
+terminal = "ghostty"
+status = "yes"
+since = "1.0 (implemented 2024-07)"
+source = "https://github.com/ghostty-org/ghostty/pull/1928"
+
+[[support]]
+terminal = "windows-terminal"
+status = "yes"
+since = "1.4.3141.0 (2020-11)"
+notes = "Tracked in microsoft/terminal#204, which doubles as a readable history of the feature's adoption."
+source = "https://github.com/microsoft/terminal/issues/204"
+
+[[support]]
+terminal = "vscode"
+status = "yes"
+since = "1.72 (2022-09)"
+notes = "Arrived with the upgrade to xterm.js 5.0, so anything else embedding xterm.js at that version or later gets it too."
+source = "https://code.visualstudio.com/updates/v1_72"
+
+[[support]]
+terminal = "contour"
+status = "yes"
+notes = "Documented as a first-class VT extension, with both the plain and the `id=` forms spelled out. The introducing release is not pinned down here."
+source = "https://contour-terminal.org/vt-extensions/clickable-links/"
+
+[[support]]
+terminal = "rio"
+status = "yes"
+notes = "OSC 8 links are always underlined while visible, unlike Rio's pattern-matched hints, which need a modifier held. The introducing release is not pinned down here."
+source = "https://rioterm.com/docs/features/hyperlinks"
+
+[[support]]
+terminal = "tmux"
+status = "yes"
+since = "3.4"
+notes = "Not passthrough: tmux stores the hyperlink in its own grid and re-emits it to the outer terminal, so it needs no configuration — a striking contrast with how tmux treats APC. The outer terminal still has to support OSC 8. Before 3.4 the sequence is stripped."
+source = "https://raw.githubusercontent.com/tmux/tmux/3.4/CHANGES"
+
+[[support]]
+terminal = "alacritty"
+status = "partial"
+since = "0.11 (2022-10)"
+notes = "Implemented, but ignored while the running application has captured the mouse — so hyperlinks printed by a full-screen TUI are not clickable at all, rather than merely needing Shift."
+source = "https://github.com/alacritty/alacritty/issues/8129"
+
+[[support]]
+terminal = "zellij"
+status = "partial"
+notes = "Passes OSC 8 through to the outer terminal, and re-emits a link broken by a line wrap as several runs sharing one `id` so it still hovers as a unit. With `mouse_mode` on, Zellij consumes the click and Shift hands it to the terminal. The release this landed in is not pinned down here."
+source = "https://github.com/zellij-org/zellij/issues/4900"
+
+[[support]]
+terminal = "konsole"
+status = "flag"
+since = "2020-07"
+notes = "Implemented, but reported as off by default. Worth re-checking against a current Konsole — this is the least certain row in the table."
+source = "https://bugs.kde.org/show_bug.cgi?id=379294"
+
+[[support]]
+terminal = "xterm"
+status = "no"
+notes = "No implementation. xterm parses the OSC string correctly and discards it, which is precisely the graceful degradation the specification promises: the text prints, the link does not exist, nothing is corrupted."
+source = "https://lists.gnu.org/archive/html/groff/2021-10/msg00002.html"
+
+[[support]]
+terminal = "screen"
+status = "no"
+notes = "No implementation, and no passthrough for it either. Text survives, links do not."
+source = "https://github.com/Alhadis/OSC8-Adoption"
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "Hyperlinks in Terminal Emulators — the specification"
+url = "https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda"
+
+[[resource]]
+title = "OSC8-Adoption — which terminal shipped it, and when"
+url = "https://github.com/Alhadis/OSC8-Adoption"
+
+[[resource]]
+title = "kitty: hyperlink click actions and configuration"
+url = "https://sw.kovidgoyal.net/kitty/open_actions/"
+
+[[resource]]
+title = "WezTerm: explicit and implicit hyperlinks"
+url = "https://wezterm.org/hyperlinks.html"
+
+[[resource]]
+title = "Contour: clickable links as a VT extension"
+url = "https://contour-terminal.org/vt-extensions/clickable-links/"
+
+[[resource]]
+title = "ripgrep's hyperlink guide — how a real tool builds the URIs"
+url = "https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md#hyperlinks"
+
+[[resource]]
+title = "ECMA-48 — the standard that defines OSC and ST"
+url = "https://ecma-international.org/publications-and-standards/standards/ecma-48/"

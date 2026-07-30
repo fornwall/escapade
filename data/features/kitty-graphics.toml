@@ -1,0 +1,592 @@
+# The kitty graphics protocol
+#
+# One file per terminal feature. Everything `escapade graphics explain` prints
+# comes from here, so prose edits need no Rust changes.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslashes
+#     sequences survive verbatim.
+#   * Write sequences symbolically: APC, ESC, CSI, ST — never embed a real 0x1b
+#     byte in this file. `escapade` prints these as text, and a literal control
+#     byte here would be executed by the reader's terminal instead.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+
+id = "kitty-graphics"
+name = "kitty graphics protocol"
+tagline = "Applications draw real raster images in the terminal — scaled to cells, layered under or over text, animated by the terminal itself."
+status = "de-facto-standard"
+author = "Kovid Goyal"
+introduced = "2017-10"
+transport = "APC"
+spec_url = "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+# The specification is versioned only by the kitty release it ships with. This
+# file was written against the docs for kitty 0.48.1 (2026-07-24); re-check the
+# control-data reference when updating it.
+spec_version = "0.48.1"
+examples_url = "https://sw.kovidgoyal.net/kitty/kittens/icat/"
+
+summary = '''
+Terminals are grids of characters, and for thirty years the only way to show a picture in one was to lie about it: half-blocks, braille dots, or **sixel** — a 1987 printer format that packs six vertical pixels into a character and has no concept of alpha, ids or scrolling.
+
+The kitty graphics protocol takes the opposite approach. The application sends **pixels**, and the terminal treats the result as a first-class object it owns:
+
+* **transmit once, display many times** — an image gets an id, and each *placement* of it can show a different part of it at a different size,
+* **scale in cells** — "put this in 20 columns", not "put this at 640×480", so the same command is right on a laptop panel and on a 5K display,
+* **layer with text** — a negative `z` puts the image under the glyphs, so text can be drawn on top of a picture and alpha-blended with it,
+* **scroll with the text**, automatically,
+* **animate on the terminal's clock** — the client transmits frames and gaps, and can then exit,
+* **skip the pty entirely** when client and terminal share a machine, by passing a file path or a shared-memory object name instead of a megabyte of base64.
+
+The terminal is required to understand exactly three payload formats — 24-bit RGB, 32-bit RGBA and PNG — and nothing else. That is the deliberate bargain: no terminal has to link an image-decoding library, and no application has to guess which formats a terminal knows.
+
+The protocol has grown in place rather than by revision. Animation arrived in kitty 0.20.0, Unicode placeholders in 0.28.0, relative placements in 0.31.0, delete-by-id-range in 0.33.0 and usage hints in 0.48.0 — which is why the support matrix below is mostly about *which parts* a terminal implements rather than whether it does.
+'''
+
+problem = '''
+**Sixel** is the incumbent, and it is genuinely more widely supported — xterm, foot, Windows Terminal, VTE, Contour and tmux all speak it, and several of them have said they will not implement anything else. But sixel is a *stream of pixels with no identity*: no id, so nothing can be redisplayed, moved, deleted, layered or animated without resending it, and no alpha channel. Its palette is limited and its escape sequence is enormous for what it carries.
+
+**iTerm2's inline images protocol** (`OSC 1337 ; File=…`) is much simpler — a whole image file, base64-encoded, with a width and height in cells — and that simplicity is the point of it. It also has no ids, no placements, no z-index, no cropping and no animation, and it asks the terminal to decode PNG, JPEG, GIF and whatever else the user has.
+
+**Half-blocks and braille** need no protocol at all and work everywhere, which makes them the right fallback. They are also, at best, one pixel per quarter cell.
+
+The honest summary: sixel is more portable, iTerm2's protocol is easier to implement, and this one is the only one of the three you can build an image viewer, a diff tool or a video player on.
+'''
+
+how_it_works = '''
+Every command is an **APC** (Application Program Command) string:
+
+```
+APC G <control data> ; <base64 payload> ST
+```
+
+which is `ESC _ G … ESC \` on the wire. The control data is a comma-separated list of `key=value` pairs; every key is a single **case-sensitive** character, so `s` and `S` mean entirely different things. The payload is arbitrary binary data, base64 encoded so that a terminal which does not implement the protocol cannot be confused by control bytes inside the string.
+
+APC is the load-bearing choice. A terminal that has never heard of the protocol **drops the whole string silently** — no stray characters, no corrupted line — which is what makes it safe to try and fall back on silence.
+
+The `a` key says what the command does:
+
+| `a` | meaning |
+| --- | --- |
+| `t` | transmit image data (the default) |
+| `T` | transmit **and** display at the cursor |
+| `q` | query: validate, answer, store nothing |
+| `p` | put — display an image transmitted earlier |
+| `d` | delete images or placements |
+| `f` | transmit an animation frame |
+| `a` | control an animation |
+| `c` | compose one animation frame onto another |
+
+Two constraints catch everyone. The first is **chunking**: a payload is cut into pieces of at most 4096 base64 bytes, each one except the last a multiple of four, with `m=1` on all but the last and `m=0` on it. Only the first chunk carries the real control data; the rest may contain only `m`, optionally `q`, and `a=f` for frame data. No other graphics command may be interleaved, and the terminal must display nothing until the last chunk has arrived and validated.
+
+The second is that **placement happens at the cursor**. There is no "draw at pixel (x, y)" — there is "draw here, scaled into `c` columns and `r` rows, offset within the first cell by `X` and `Y` pixels". Afterwards the cursor moves past the image, unless `C=1` says otherwise.
+'''
+
+payload = '''
+Three formats, selected with `f`:
+
+* **`f=32`** (the default) — four bytes per pixel, RGBA, with **straight** rather than premultiplied alpha, rows top to bottom. `s` and `v` must give the width and height, because raw pixels carry no dimensions.
+* **`f=24`** — three bytes per pixel, RGB. A quarter smaller than RGBA, which matters when it is going down a pty as base64.
+* **`f=100`** — an entire PNG file. The terminal reads the dimensions out of the IHDR chunk itself, so `s` and `v` are omitted. Usually the most compact option, and the only one that can carry a palette.
+
+The colours **must** be in the sRGB colour space.
+
+Any format can additionally be zlib-compressed (RFC 1950) by adding `o=z`, applied before base64. Combining PNG with compression also requires `S`, the size of the PNG data.
+
+Where the bytes come from is a separate axis, the `t` key:
+
+* **`t=d`** — direct: the payload *is* the data. The only option that works over ssh, and the only one every implementation supports.
+* **`t=f`** — the payload is a path to a regular file, which the terminal reads and leaves alone. `S` and `O` can select a byte range within it.
+* **`t=t`** — a temporary file the terminal deletes after reading.
+* **`t=s`** — a POSIX shared-memory object (a named shared-memory object on Windows), which the terminal reads, then unlinks and closes.
+
+A client cannot know a priori whether it shares a filesystem with the terminal — it may be at the far end of an ssh connection — so the way to find out is to try a one-pixel image with `a=q` and read the answer.
+
+**Animation frames** are transmitted the same way with `a=f`, plus the image's `i` or `I`. A frame is built by compositing the transmitted pixels onto a canvas, which is either a flat colour (`Y`, a 32-bit RGBA integer) or the pixels of an earlier frame (`c`, a 1-based frame number). Since a frame can cover just a rectangle — `x`, `y` with `s`, `v` — an animation where one small object moves across a static background costs almost nothing per frame. `z` sets the frame's *gap* in milliseconds; a negative gap makes a *gapless* frame, which is never shown but can serve as base data for later frames.
+### What `escapade graphics render` accepts
+
+Since a terminal only understands RGB, RGBA and PNG, everything else has to be converted before it can be sent — and something has to decide *what the input is* before it can be converted. `render` decides in three stages, and stops at the first one that answers:
+
+1. **The file extension.** `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.svgz`, `.dot`, `.gv`, `.folded`, `.collapsed`, `.perf`. Cheap and unambiguous, and what you meant.
+2. **The leading bytes.** PNG, JPEG, GIF and WebP have magic numbers, so a mislabelled file — or a pipe, which has no name at all — is still identified. SVG and Graphviz have no magic number, being text, so they are matched on the shape of the first line: `<svg`, or `<?xml` with an `<svg` element soon after; and a first token of `graph`, `digraph` or `strict`. Both rules are deliberately narrow, because the cost of a false positive is running Graphviz on somebody's log file.
+3. **A guess.** Text that is none of the above is handed to `inferno`'s format detector, which recognises `perf script`, DTrace, macOS `sample`, VTune and Visual Studio output, folds it into collapsed stacks, and draws it as a **flame graph** — which is then just an SVG, and goes through the same path as any other SVG. Collapsed stacks that arrive already folded are recognised too.
+
+Stage 3 is a **heuristic and it can be wrong**. When nothing recognises the input, the error says which stages were tried and prints the first line, so a bad guess is diagnosable rather than mysterious. `--input-type` skips the whole business and states the answer.
+
+Two conversions are worth knowing about. A PNG is **never decoded** — it is forwarded byte for byte as `f=100`, which is why `--background` cannot be applied to one. And nothing is resampled unless the source dwarfs the placement: sending full-resolution pixels with `c` and `r` lets a terminal on a HiDPI screen render at its real device resolution, which resampling here would have thrown away.
+'''
+
+security = '''
+The protocol hands a terminal emulator two capabilities that deserve scrutiny, and both have explicit rules.
+
+**Reading files the application names.** With `t=f`, `t=t` and `t=s` the payload is a path or an object name, and the terminal opens it — with the terminal's privileges, not the application's. So the spec requires terminals to refuse anything that is not a regular file (no device files, no sockets, no named pipes), to follow symlinks but fail on loops, and permits them to refuse *sensitive* parts of the filesystem such as `/proc`, `/sys` and `/dev`. `t=t` may only delete the file if it is in a known temporary directory **and** has the string `tty-graphics-protocol` somewhere in its full path — which is what stops a stray `a=t,t=t` from deleting an arbitrary file. Some implementations decline the whole axis: Contour's comment for rejecting `t=f` is that it "would let it point the terminal at any file the user can read".
+
+**Unbounded memory.** An image is stored until it is deleted, so terminals are expected to enforce a storage quota — kitty's is 320MB per buffer, with five times that for animation frames on disk — and to evict older images rather than grow without limit. `ENOSPC` is the reply when the quota is full.
+
+Two smaller points. Image ids live in **one namespace shared by every program writing to that terminal**, so re-using an id silently replaces somebody else's image; that is what the `I` (image *number*) key exists to avoid, since the terminal then allocates the id and tells you what it was. And unlike a font-glyph mechanism, images never enter the cell buffer: selection, copy and search return the text that was there, never the picture drawn over it.
+
+Reading a file the *application* named is a smaller version of the same question, and `escapade graphics render` answers it the same way: it will only run `dot` on something whose first token is a graph declaration, and it never hands a path to the terminal — everything goes out as `t=d`.
+'''
+
+caveats = '''
+* **Multiplexers filter APC.** Inside tmux an unwrapped APC never reaches the outer terminal; tmux needs `set -g allow-passthrough on` and the sequence wrapped in its `DCS tmux;` form with every inner ESC doubled. Even then, passthrough forwards bytes without tracking anything, so classic placements stay at absolute pixel positions while the text scrolls under them. **Unicode placeholders are the answer** — those cells are real text, so tmux moves them and the image follows. kitty's `icat` detects `$TMUX` and switches to them automatically.
+* **Nothing tells you which *parts* are implemented.** The query action answers "yes, I speak the protocol", and that is all. Animation is missing from Ghostty, Konsole, iTerm2, Rio and Contour; Unicode placeholders are missing from WezTerm, Konsole and Contour. There is no capability string — you find out by trying, and by reading a table like the one above.
+* **Ids collide.** Use the `I` key and let the terminal allocate one, unless you own the whole screen.
+* **Read your replies, or silence them.** A terminal's `APC G i=1;OK ST` arrives on *stdin*. A program that does not read it hands it to whatever runs next — which in a shell means the reply appears as typed input. Send `q=1` to suppress `OK` and `q=2` to suppress errors too.
+* **The cursor is the coordinate system.** Position the cursor first, then send the placement — and remember the placement moves the cursor afterwards unless `C=1`.
+* **`s`/`S`, `c`/`C`, `z`/`Z` and `x`/`X` are different keys.** The control data is case-sensitive throughout, and the same letter means different things under different `a` values: `c` is a column count when displaying, a base frame when loading frame data, and the current frame when controlling an animation.
+* **Terminals may report a cell size of zero.** `CSI 14 t` and `CSI 16 t` are how you learn how many pixels a cell has, but they are not part of this protocol, and some terminals answer `0` or do not answer at all. `TIOCGWINSZ` is the more reliable route, and even it is often zero.
+'''
+
+# ---------------------------------------------------------------------------
+# The commands, in the order an application uses them.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+verb = "a=q"
+name = "Query"
+purpose = "Capability detection: does this terminal speak the protocol, and can it load data sent this way?"
+request = "APC G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ST"
+reply = "APC G i=31;OK ST"
+notes = '''That payload is a 1×1 black pixel, and `a=q` makes the terminal validate it, answer, and then store nothing — it will not replace an existing image with the same id. Terminals that implement the protocol **must** answer a query immediately, before processing other input, so pairing it with a Primary Device Attributes request (`CSI c`) as a barrier turns silence into a conclusion: if the DA1 answer arrives and this one did not, the terminal has demonstrably had its chance. The same trick with `t=s` or `t=f` is how you discover whether you share a machine with the terminal.'''
+
+[[sequence]]
+verb = "a=T"
+name = "Transmit and display"
+purpose = "The one-liner: send pixels and put them on screen at the cursor."
+request = "APC G a=T,f=100,i=42,c=20 ; <base64 PNG> ST"
+reply = "APC G i=42;OK ST"
+notes = '''`a=T` is `a=t` and `a=p` in a single command. With only `c` given, the terminal derives the row count from the aspect ratio, which is more accurate than rounding it to whole cells yourself. Errors come back as a code and a message: `EBADPNG` for a PNG the terminal could not decode, `EILSEQ` for a payload whose size disagrees with `s` and `v`, `ENOSPC` when the image quota is full.'''
+
+[[sequence]]
+verb = "a=t"
+name = "Transmit"
+purpose = "Store an image under an id, without displaying it yet."
+request = "APC G a=t,f=32,s=100,v=30,i=42,m=1 ; <first 4096 base64 bytes> ST"
+reply = "APC G i=42;OK ST"
+notes = '''Raw pixel formats must send `s` and `v`; PNG must not. Use `I` instead of `i` when you do not own the screen: the terminal then allocates an id and returns it as `APC G i=99,I=13;OK ST`, and you use that `i` from then on. Re-transmitting data for an existing id deletes the old image and all of its placements first.
+
+Chunked transfers put the full control data on the first chunk only. Every subsequent chunk carries `m=1` — or `m=0` for the last — and nothing else, except optionally `q`, plus `a=f` when the data belongs to an animation frame.'''
+
+[[sequence]]
+verb = "a=p"
+name = "Put (place)"
+purpose = "Display an already-transmitted image — as many times, and as differently, as you like."
+request = "APC G a=p,i=42,p=7,x=60,y=60,w=120,h=120,c=10,r=5,z=-1 ST"
+reply = "APC G i=42,p=7;OK ST"
+notes = '''`c` and `r` scale; `x`, `y`, `w`, `h` select a rectangle of *source pixels* and crop. `X` and `Y` offset the image within the first cell, which is how an image is positioned off the cell grid — they must be smaller than a cell, and they do not count towards `c` and `r`.
+
+A placement id (`p`) makes the placement addressable: sending the same image id and placement id again **replaces** it, which is how an image is moved or resized without flicker. `ENOENT` means the image is gone and needs retransmitting — the reply an application gets when it assumed an id survived.
+
+`z` is the stacking order. Negative draws under the text; below `INT32_MIN/2` (-1073741824) it also goes under cells with non-default background colours. Where two images at the same `z` overlap, the lower image id is drawn first.'''
+
+[[sequence]]
+name = "Unicode placeholders"
+purpose = "Display an image as *text*, so that editors, pagers and multiplexers move it correctly."
+request = "APC G a=p,U=1,i=42,c=2,r=2 ST   then   CSI 38;2;0;0;42 m  U+10EEEE U+0305 U+0305  …"
+notes = '''Transmit the image quietly (`q=2`, so no reply can confuse the host application), create a *virtual placement* with `U=1` and an explicit `c` and `r`, then print the private-use character **U+10EEEE** once per cell. The image id travels in the cell's foreground colour: 8 bits in 256-colour mode, 24 bits in truecolor, with a third diacritic carrying the most significant byte if you need more. The placement id, if any, travels in the underline colour.
+
+Row and column are encoded as combining characters from a fixed list of 297 class-230 marks; index `n` in that list means the number `n`, so `U+0305` is 0, `U+030D` is 1 and `U+030E` is 2. Diacritics may be omitted to inherit from the cell to the left, but that inheritance is documented to fail for horizontally scrolled and overlapping images, so spelling every cell out is safer.
+
+Virtual placements have no position on screen, which is why only `d=i`, `d=I`, `d=n`, `d=N`, `d=r` and `d=R` can delete one. And the real images drawn over placeholder cells are not placements at all from the protocol's point of view: they are moved, scrolled and deleted by manipulating the text.'''
+
+[[sequence]]
+verb = "a=d"
+name = "Delete"
+purpose = "Remove placements, and optionally the image data behind them."
+request = "APC G a=d,d=i,i=42 ST"
+reply = "APC G i=42;OK ST"
+notes = '''Bare `a=d` deletes every placement visible on screen. The `d` key narrows it: `a` all visible, `i` by image id, `n` by image number, `c` at the cursor, `p` at a cell given by `x` and `y`, `q` at a cell and z-index, `r` an inclusive id range given by `x` and `y`, `x`/`y` a whole column or row, `z` a z-index, `f` an image's animation frames.
+
+**Case is the interesting part.** A lowercase `d` value deletes the placements but keeps the pixels, so the image can be shown again without retransmitting it — this is what lets a file manager scroll through a directory of thumbnails cheaply. An uppercase value frees the image data as well.
+
+Any delete command aborts a partial chunked upload.'''
+
+[[sequence]]
+verb = "a=f"
+name = "Transmit animation frame"
+purpose = "Add a frame to an existing image, turning it into an animation."
+request = "APC G a=f,i=42,f=32,s=24,v=24,x=8,y=5,c=1,z=160,X=1 ; <base64 pixels> ST"
+reply = "APC G i=42;OK ST"
+notes = '''The frame's pixels are composited onto a canvas: the pixels of frame `c` (1-based, `c=1` being the root frame — the base image data), or a flat colour from `Y` as a 32-bit RGBA integer, defaulting to transparent black. `X=1` overwrites instead of alpha-blending. Sending `r` edits an existing frame rather than creating a new one, which is how a frame made of several rectangles is assembled.
+
+`z` here is the *gap* in milliseconds before the next frame — a completely different meaning from the `z` of a placement. Zero is ignored, a negative value makes a gapless frame (never displayed, but usable as base data), and an unspecified gap is 40ms, except on the root frame, which defaults to none.'''
+
+[[sequence]]
+verb = "a=a"
+name = "Control animation"
+purpose = "Start, stop, step or re-time an animation."
+request = "APC G a=a,i=42,s=3,v=1 ST"
+notes = '''`s=1` stops, and resets the loop counter. `s=2` runs but waits at the last frame for more to arrive — how a client streams an animation it is still producing. `s=3` runs and loops. `v` is the loop count: `1` means forever and is the default, and any larger `n` plays `n-1` loops.
+
+`c=<frame>` makes a frame current, which is a *client-driven* animation: the client is the clock, and pays the round-trip latency for every frame. `r` with `z` sets one frame's gap, and is the only way to set the root frame's, since the root frame is created with the image data and has no gap of its own. Once the gaps are set the animation is the terminal's to run, and the client can exit.'''
+
+[[sequence]]
+verb = "a=c"
+name = "Compose animation frames"
+purpose = "Copy a rectangle of pixels from one frame onto another, without retransmitting anything."
+request = "APC G a=c,i=1,r=7,c=9,w=23,h=27,X=4,Y=8,x=1,y=3 ST"
+notes = '''`r` is the source frame and `c` the destination, both 1-based. The rectangle's size is `w`/`h`, its origin in the *source* is `X`/`Y` and in the *destination* `x`/`y` — the opposite of the case convention used when loading frame data, which is worth reading twice. `C=1` overwrites rather than alpha-blends.
+
+Missing frames give `ENOENT`, out-of-bounds rectangles `EINVAL`, and so does an overlapping copy within a single frame.'''
+
+# ---------------------------------------------------------------------------
+# Parameters. All integers are 32-bit; keys are case-sensitive.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "a"
+applies_to = "every command"
+default = "t"
+description = "The action: `t` transmit, `T` transmit and display, `q` query, `p` put, `d` delete, `f` frame data, `a` animation control, `c` compose frames."
+
+[[param]]
+key = "q"
+applies_to = "every command"
+default = "0"
+description = "Response suppression: `1` suppresses `OK`, `2` suppresses errors as well. Anything sharing a screen — or going through a multiplexer — wants at least `1`."
+
+[[param]]
+key = "f"
+applies_to = "transmission"
+default = "32"
+description = "Payload format: `24` RGB, `32` RGBA with straight alpha, `100` a PNG file. sRGB is required."
+
+[[param]]
+key = "t"
+applies_to = "transmission"
+default = "d"
+description = "Transmission medium: `d` direct, `f` a file, `t` a temporary file the terminal deletes, `s` a shared-memory object. Anything but `d` needs client and terminal on the same machine."
+
+[[param]]
+key = "s, v"
+applies_to = "transmission, frame data"
+default = "0"
+description = "Width and height in pixels. Required for `f=24` and `f=32`, omitted for PNG. When loading frame data, the size of the rectangle being sent."
+
+[[param]]
+key = "S, O"
+applies_to = "transmission"
+default = "0"
+description = "Size and offset of the data to read from a file or shared-memory object — or the size of the PNG data, when combining `f=100` with compression."
+
+[[param]]
+key = "i"
+applies_to = "most commands"
+default = "0"
+description = "Image id, `1`–`4294967295`. One namespace shared by every program writing to the terminal; `0` means unset. Sending both `i` and `I` is an error (`EINVAL`)."
+
+[[param]]
+key = "I"
+applies_to = "transmission, placement, deletion"
+default = "0"
+description = "Image *number*, for clients that cannot know which ids are free. Creating an image with `I` makes the terminal allocate an id and report it; later commands with that number act on the newest such image."
+
+[[param]]
+key = "p"
+applies_to = "placement, deletion"
+default = "0"
+description = "Placement id. A placement is identified by the pair (image id, placement id); re-sending the same pair replaces it, which is how images move without flicker."
+
+[[param]]
+key = "o"
+applies_to = "transmission"
+default = ""
+description = "Compression, applied before base64. `z` is zlib (RFC 1950), and the only defined value."
+
+[[param]]
+key = "m"
+applies_to = "transmission"
+default = "0"
+description = "`1` means more chunks follow, `0` that this is the last. Chunks are at most 4096 base64 bytes, and all but the last must be a multiple of four."
+
+[[param]]
+key = "N"
+applies_to = "transmission"
+default = "0"
+description = "Usage hints, as a bitmask. `1` is *transient*: the terminal may evict this image before others under storage pressure. Added in kitty 0.48.0."
+
+[[param]]
+key = "x, y, w, h"
+applies_to = "placement"
+default = "0"
+description = "The rectangle of *source pixels* to display. Crops rather than scales; the visible area is the intersection with the image, so an oversized rectangle is harmless."
+
+[[param]]
+key = "c, r"
+applies_to = "placement"
+default = "0"
+description = "Columns and rows to scale the image into. Give only one and the terminal derives the other from the aspect ratio — the most accurate way to preserve it."
+
+[[param]]
+key = "X, Y"
+applies_to = "placement"
+default = "0"
+description = "Pixel offsets within the first cell, which must be smaller than a cell and are not added to `c` and `r`. This is how an image is positioned off the cell grid."
+
+[[param]]
+key = "z"
+applies_to = "placement"
+default = "0"
+description = "Stacking order. Negative draws under the text; below `-1073741824` also under non-default cell backgrounds. Ties are broken by image id."
+
+[[param]]
+key = "C"
+applies_to = "placement"
+default = "0"
+description = "Cursor movement policy. `0` moves the cursor past the image, `1` leaves it exactly where it was."
+
+[[param]]
+key = "U"
+applies_to = "placement"
+default = "0"
+description = "`1` creates a *virtual* placement: the invisible prototype a Unicode placeholder refers to. Needs an explicit `c` and `r`."
+
+[[param]]
+key = "P, Q, H, V"
+applies_to = "placement"
+default = "0"
+description = "Relative placement: position this placement against the parent identified by image id `P` and placement id `Q`, offset by `H` columns and `V` rows. The child's lifetime is tied to the parent's. Cycles give `ECYCLE`, a missing parent `ENOPARENT`, an over-long chain `ETOODEEP`."
+
+[[param]]
+key = "c, r, z, X, Y"
+applies_to = "frame data (a=f)"
+default = "0"
+description = "Overloaded for animation: `c` is the frame whose pixels are the canvas, `r` the frame being edited, `z` the gap in milliseconds (negative means gapless), `X=1` overwrite instead of blend, `Y` the canvas colour as 32-bit RGBA."
+
+[[param]]
+key = "s, r, c, z, v"
+applies_to = "animation control (a=a)"
+default = "0"
+description = "Overloaded again: `s` is `1` stop / `2` run-and-wait / `3` run-and-loop, `r` the frame whose gap `z` sets, `c` the frame to make current, `v` the loop count (`1` is forever)."
+
+[[param]]
+key = "d"
+applies_to = "deletion (a=d)"
+default = "a"
+description = "What to delete: `a` all visible, `i` by id, `n` by number, `c` at the cursor, `f` animation frames, `p` at a cell, `q` at a cell and z-index, `r` an id range, `x`/`y` a column or row, `z` a z-index. Uppercase frees the image data as well as the placements."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "kitten icat"
+kind = "application"
+url = "https://sw.kovidgoyal.net/kitty/kittens/icat/"
+notes = "The reference client, and the best-documented one. Worth reading for how it detects tmux and switches to Unicode placeholders."
+
+[[user]]
+name = "Yazi"
+kind = "application"
+url = "https://github.com/sxyazi/yazi"
+notes = "Terminal file manager with image previews; uses this protocol when available and falls back to sixel and half-blocks."
+
+[[user]]
+name = "chafa"
+kind = "application"
+url = "https://github.com/hpjansson/chafa"
+notes = "Image viewer that speaks kitty graphics, sixel, iTerm2 and Unicode blocks, choosing by capability detection."
+
+[[user]]
+name = "timg"
+kind = "application"
+url = "https://github.com/hzeller/timg"
+notes = "Image and video viewer. Uses the protocol's own animation support rather than redrawing frames from the client."
+
+[[user]]
+name = "mpv"
+kind = "application"
+url = "https://github.com/mpv-player/mpv/commit/874e28f4a41a916bb567a882063dd2589e9234e1"
+notes = "Video playback in a terminal window, through a kitty output driver."
+
+[[user]]
+name = "Neovim"
+kind = "application"
+url = "https://github.com/3rd/image.nvim"
+notes = "Images in the editor, via image.nvim and its relatives — the main real-world user of Unicode placeholders."
+
+[[user]]
+name = "broot"
+kind = "application"
+url = "https://dystroy.org/broot/"
+notes = "File explorer with previews of images, SVG and PDF."
+
+[[user]]
+name = "notcurses"
+kind = "library"
+url = "https://github.com/dankamongmen/notcurses"
+notes = "C library with C++, Rust and Python bindings; abstracts over kitty graphics and sixel."
+
+[[user]]
+name = "term-image"
+kind = "library"
+url = "https://github.com/AnonymouX47/term-image"
+notes = "Python library, CLI and TUI for displaying and browsing images."
+
+[[user]]
+name = "awrit"
+kind = "application"
+url = "https://github.com/chase/awrit"
+notes = "A Chromium-based web browser rendered into a terminal, with mouse and keyboard support. The clearest demonstration of how far the protocol goes."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough  multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# "partial" does a lot of work in this table: almost every implementation other
+# than kitty's is missing animation, Unicode placeholders, or both.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+since = "2017; animation in 0.20.0, placeholders 0.28.0, relative placements 0.31.0, usage hints 0.48.0"
+notes = "The reference implementation, and the definition of complete: it is where the specification lives."
+source = "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+
+[[support]]
+terminal = "ghostty"
+status = "partial"
+since = "1.0.0 (2024-12)"
+notes = '''Everything except animation, which is refused outright with "ERROR: unimplemented action" — unchanged since 1.0. Unicode placeholders are fully implemented. Relative placements are parsed but unused. z-index stacking is known to be wrong in some cases, and classic (non-placeholder) placements do not scroll with `CSI` scroll commands.'''
+source = "https://github.com/ghostty-org/ghostty/issues/8272"
+
+[[support]]
+terminal = "wezterm"
+status = "partial"
+since = "20220101-133340; shared memory 20220408"
+notes = '''No Unicode placeholders — the long-standing gap, tracked in issue 4531. Frame transmission (`a=f`) and composition (`a=c`) work and auto-play, but animation *control* (`a=a`) does not, so there is no stop, start or loop count. Note that the last stable release was 2024-02-03: anyone not running a nightly has that feature set.'''
+source = "https://github.com/wezterm/wezterm/issues/4531"
+
+[[support]]
+terminal = "iterm2"
+status = "partial"
+since = "3.5.6 (2024-11), after 3.5.4beta2"
+notes = '''The implementing commit says it plainly: "Implement Kitty graphics protocol, except animation." Still true on master. Unicode placeholders and relative placements are both implemented; file and shared-memory transmission arrived later, in the 3.5.15beta/3.6 line. iTerm2 also has its own, much simpler inline-images protocol (`OSC 1337 ; File=`), which predates this one.'''
+source = "https://github.com/gnachman/iTerm2/commit/4fe5b2173193b6c3e45234b6b2ab7a144a5cfa01"
+
+[[support]]
+terminal = "rio"
+status = "partial"
+since = "0.3.0 (2026-04); full Unicode placeholders in 0.5.0 (2026-07)"
+notes = '''All four transmission media, zlib, z-index, broad deletion, chunking and full Unicode placeholder support. No animation: `a=f`, `a=a` and `a=c` are answered with `EINVAL:unsupported action`. Relative placement keys are parsed but never acted on.'''
+source = "https://rioterm.com/docs/features/kitty-graphics-protocol"
+
+[[support]]
+terminal = "st"
+status = "partial"
+since = "patch series by Sergei Grechanik; latest 2025-12, for st 0.9.3"
+notes = '''Needs patching, so it is a build-time choice rather than a feature of st. Notable because the patch is by the author of the Unicode placeholder design itself, and its README documents exactly what works: all four media, zlib, placeholders, and experimental animation (`a=f` and `a=a` yes, `a=c` no). No z-index — overlapping placements erase what was under them — and no relative placements. Vanilla st has no graphics at all, nor `CSI 14 t`.'''
+source = "https://github.com/sergei-grechanik/st-graphics"
+
+[[support]]
+terminal = "konsole"
+status = "partial"
+since = "22.04 (2022-04)"
+notes = '''Direct transmission only: any `t` other than `d` is answered with `ENOTSUPPORTED`. No animation, no Unicode placeholders, no relative placements. The parsed key set is unchanged since it landed, so treat this as a stable subset rather than work in progress. The exact release is inferred by bisecting tags — the merge request carries no milestone.'''
+source = "https://invent.kde.org/utilities/konsole/-/merge_requests/594"
+
+[[support]]
+terminal = "warp"
+status = "partial"
+since = "2025 (v0.2025.03.26.08.10 or later)"
+notes = "Advertised as full support for the kitty image protocol. Not independently verified here, and Warp is closed-source, so the gaps — if there are any — cannot be checked the way the others can."
+source = "https://www.warp.dev/blog/launch-log-2"
+
+[[support]]
+terminal = "wayst"
+status = "partial"
+since = "2020-09 (git only — there are no releases)"
+notes = '''Self-described as experimental, and git-master only. Direct and file transmission; shared memory is parsed and then rejected. `z` is never parsed at all, so every image sits at z-index 0. No placeholders, no animation. Its `CSI 14 t` reply is malformed — an extra semicolon, with width and height swapped.'''
+source = "https://github.com/91861/wayst"
+
+[[support]]
+terminal = "vscode"
+status = "flag"
+since = "1.110 (2026-02)"
+notes = '''Needs `terminal.integrated.enableImages` plus GPU acceleration. It consumes the xterm.js image addon's beta line, and explicitly does not support animation, relative placements, Unicode placeholders or file-based transmission. The published documentation page still says sixel and iTerm2 only.'''
+source = "https://code.visualstudio.com/updates/v1_110"
+
+[[support]]
+terminal = "contour"
+status = "unknown"
+since = "unreleased — on main since 2026-07"
+notes = '''Landed on `main` in July 2026 and is in no release yet, so "unknown" is the honest status for anything a user can install today. Even on main it is deliberately minimal: direct transmission only, no compression, no animation, no Unicode placeholders. The comment for refusing `t=f` is that it "would let it point the terminal at any file the user can read".'''
+source = "https://github.com/contour-terminal/contour"
+
+[[support]]
+terminal = "foot"
+status = "no"
+notes = '''Declined, repeatedly and on the record: APC strings are discarded outright by the parser. The maintainer, on a 2026 request: "while that issue is still open, I don't really see us implementing another graphics protocol." foot has supported sixel since 1.2.0.'''
+source = "https://codeberg.org/dnkl/foot/issues/2342"
+
+[[support]]
+terminal = "alacritty"
+status = "no"
+notes = '''No graphics protocol of any kind, sixel included, and declined as recently as July 2026: "Alacritty is intended to be much more conservative… the best way to avoid running into them is by not implementing support."'''
+source = "https://github.com/alacritty/alacritty/issues/910"
+
+[[support]]
+terminal = "windows-terminal"
+status = "no"
+notes = "Open since 2020, priority 3, milestone Backlog. Sixel shipped in 1.22 (preview 2024-08, stable 2025-02), so images are possible there — just not this way."
+source = "https://github.com/microsoft/terminal/issues/8389"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "no"
+notes = "No implementation in VTE, and no tracking issue to point at — so this is \"unimplemented\", not \"declined\". VTE does have sixel support, double-gated behind a build option and a runtime default that are both off."
+source = "https://gitlab.gnome.org/GNOME/vte/-/issues/253"
+
+[[support]]
+terminal = "xterm"
+status = "no"
+notes = "By design: \"xterm implements no APC functions; Pt is ignored.\" xterm is where sixel support is best, and needs a vt340-class terminal id to enable it."
+source = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[support]]
+terminal = "tmux"
+status = "passthrough"
+notes = '''No native support in any release — there is not a single mention of kitty in the source. `set -g allow-passthrough on` (3.3+) forwards the bytes verbatim and does nothing else: no parsing, no image tracking, no cursor offsetting. So classic placements stay at absolute pixel positions while text scrolls, survive `Ctrl-L` as ghosts, and can draw over neighbouring panes. **Unicode placeholders do work**, because those cells are ordinary text, and kitty's `icat` switches to them automatically inside tmux — but the outer terminal must implement placeholders too. tmux's own image support is sixel-only, behind `--enable-sixel`. An unmerged native implementation exists on the `ta/kitty-img` branch, dormant since March 2026.'''
+source = "https://github.com/tmux/tmux/issues/4902"
+
+[[support]]
+terminal = "zellij"
+status = "no"
+notes = '''No support, and no passthrough equivalent either. The cause is structural: Zellij parses with the `vte` crate, whose `Perform` trait has no APC callback, so the sequence is discarded with nowhere to hook in. Sixel is supported natively since 0.31.0. The request has been open since September 2023 with no maintainer comment — which is not the same as a refusal, whatever the internet says.'''
+source = "https://github.com/zellij-org/zellij/issues/2814"
+
+[[support]]
+terminal = "screen"
+status = "no"
+notes = "APC strings are consumed and used to set the hardstatus line. No sixel either, in 5.0.x."
+source = "https://ftp.gnu.org/gnu/screen/"
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "Terminal graphics protocol — the specification"
+url = "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
+
+[[resource]]
+title = "kitten icat — the reference client, and the tmux/placeholder story"
+url = "https://sw.kovidgoyal.net/kitty/kittens/icat/"
+
+[[resource]]
+title = "rowcolumn-diacritics.txt — the 297 marks that encode placeholder rows and columns"
+url = "https://github.com/kovidgoyal/kitty/blob/master/gen/rowcolumn-diacritics.txt"
+
+[[resource]]
+title = "kitty issue 33 — the design discussion the protocol came out of"
+url = "https://github.com/kovidgoyal/kitty/issues/33"
+
+[[resource]]
+title = "Are we sixel yet? — the competing protocol's support table"
+url = "https://www.arewesixelyet.com"
