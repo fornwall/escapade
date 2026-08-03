@@ -302,7 +302,13 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<State> {
             state.scheme = Some(scheme);
             continue;
         }
-        if matches!(&reply, Reply::Csi { final_byte: 'c', .. }) {
+        if matches!(
+            &reply,
+            Reply::Csi {
+                final_byte: 'c',
+                ..
+            }
+        ) {
             // Everything sent before the barrier has been processed, so anything
             // still missing is missing on purpose.
             state.answered_barrier = true;
@@ -374,12 +380,18 @@ mod tests {
     #[test]
     fn parses_both_schemes() {
         assert_eq!(parse_scheme_report(&csi("?997;1", 'n')), Some(Scheme::Dark));
-        assert_eq!(parse_scheme_report(&csi("?997;2", 'n')), Some(Scheme::Light));
+        assert_eq!(
+            parse_scheme_report(&csi("?997;2", 'n')),
+            Some(Scheme::Light)
+        );
     }
 
     #[test]
     fn tolerates_the_padding_some_terminals_add() {
-        assert_eq!(parse_scheme_report(&csi("? 997 ; 1 ", 'n')), Some(Scheme::Dark));
+        assert_eq!(
+            parse_scheme_report(&csi("? 997 ; 1 ", 'n')),
+            Some(Scheme::Dark)
+        );
     }
 
     #[test]
@@ -390,11 +402,26 @@ mod tests {
 
     #[test]
     fn refuses_what_is_not_a_scheme_report() {
-        assert_eq!(parse_scheme_report(&csi("?997;1", 'y')), None, "wrong final byte");
-        assert_eq!(parse_scheme_report(&csi("?996;1", 'n')), None, "the request, not the report");
+        assert_eq!(
+            parse_scheme_report(&csi("?997;1", 'y')),
+            None,
+            "wrong final byte"
+        );
+        assert_eq!(
+            parse_scheme_report(&csi("?996;1", 'n')),
+            None,
+            "the request, not the report"
+        );
         assert_eq!(parse_scheme_report(&csi("?997", 'n')), None, "no value");
-        assert_eq!(parse_scheme_report(&csi("?997;x", 'n')), None, "unparseable value");
-        assert_eq!(parse_scheme_report(&Reply::Osc("11;rgb:0/0/0".to_owned())), None);
+        assert_eq!(
+            parse_scheme_report(&csi("?997;x", 'n')),
+            None,
+            "unparseable value"
+        );
+        assert_eq!(
+            parse_scheme_report(&Reply::Osc("11;rgb:0/0/0".to_owned())),
+            None
+        );
         assert_eq!(parse_scheme_report(&csi("?62;4", 'c')), None, "the barrier");
     }
 
@@ -435,11 +462,7 @@ mod tests {
     #[test]
     fn an_implemented_mode_is_a_yes_however_it_is_currently_set() {
         // Set, reset and permanently set all mean the terminal has the mode.
-        for state in [
-            ModeState::Set,
-            ModeState::Reset,
-            ModeState::PermanentlySet,
-        ] {
+        for state in [ModeState::Set, ModeState::Reset, ModeState::PermanentlySet] {
             assert_eq!(with_mode(Some(state)).support(), Support::Yes, "{state:?}");
         }
     }
@@ -528,7 +551,11 @@ mod tests {
             answered_barrier: false,
             ..with_mode(None)
         };
-        assert!(unknown.explain(poll).contains("1s"), "{}", unknown.explain(poll));
+        assert!(
+            unknown.explain(poll).contains("1s"),
+            "{}",
+            unknown.explain(poll)
+        );
 
         let multiplexed = State {
             multiplexer: Some(Multiplexer::Tmux),

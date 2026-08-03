@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The default token is read/write across the repository. Nothing in this
+# workflow writes anything, so drop it to the one scope `checkout` needs.
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the run already in flight pointless.
+# `head_ref` is set for pull requests and empty otherwise, so this groups by PR
+# branch on pull_request and by ref on push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artifacts are never reused across CI runs; they only make the
+  # cache bigger and slower to restore.
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # rustup 1.28 stopped installing a missing toolchain on demand, and the
+      # runners ship 1.29, so the toolchain has to be requested explicitly.
+      # Passing no toolchain name is what makes rustup read rust-toolchain.toml
+      # — that keeps the version and its components (clippy, rustfmt) declared
+      # in exactly one place instead of drifting against a version written here.
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install --no-self-update
+
+      # No caching: rustfmt only parses, so there is nothing to reuse.
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install --no-self-update
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # `-D warnings` after `--` reaches only this crate, not its dependencies,
+      # so an upstream warning cannot fail the build. `Cargo.toml` sets
+      # `clippy::all` and `clippy::pedantic` to warn; this is what makes them
+      # binding.
+      - name: Run clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Report every platform's result. Which platforms fail is the useful
+      # signal, and cancelling the rest on the first failure hides it.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install --no-self-update
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # Every test is a pure unit test; none needs a terminal, and none needs
+      # graphviz on PATH — the one test that touches `dot` asserts on either
+      # outcome, so no package has to be installed here.
+      - name: Run tests
+        run: cargo test --locked --all-features
+
+  build:
+    name: Release build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install --no-self-update
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # The release profile sets `strip = true`, which the debug builds above
+      # never exercise — and which strips Mach-O and ELF by different paths, so
+      # it is worth running on both. Default features only: this is what ships.
+      - name: Build with the release profile
+        run: cargo build --locked --release
+
+  doc:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install --no-self-update
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # Intra-doc links are the doc comments' only checkable claim: a link to a
+      # renamed or deleted item is a silent lie about where the reasoning lives,
+      # and this codebase leans on those cross-references heavily. `--no-deps`
+      # keeps the check about this crate.
+      - name: Build the documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --all-features
+
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # Downloading the release binary keeps the version pinned and visible.
+      # actionlint additionally shells out to shellcheck for `run:` blocks, and
+      # the runner image already has it.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz actionlint
+
+      - name: Lint workflow files
+        run: ./actionlint -color

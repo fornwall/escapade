@@ -314,7 +314,10 @@ mod tests {
         keyboard.discard_pending();
         // With the mirror resynced there is nothing left to mis-attribute; the
         // pipe has also been drained, which is the documented cost.
-        let next = keyboard.next_event(Duration::from_millis(50)).ok().flatten();
+        let next = keyboard
+            .next_event(Duration::from_millis(50))
+            .ok()
+            .flatten();
         assert!(next.is_none_or(|(_, bytes)| bytes == b"\r"));
     }
 

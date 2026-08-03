@@ -103,9 +103,7 @@ pub fn parse_line(line: &str) -> Line {
         return Line::Ignored;
     }
 
-    let number = trimmed
-        .strip_suffix('%')
-        .map_or(trimmed, str::trim_end);
+    let number = trimmed.strip_suffix('%').map_or(trimmed, str::trim_end);
     if let Some(value) = parse_number(number) {
         let (percent, _) = Percent::clamping(value);
         return Line::Percent(percent);
@@ -481,7 +479,10 @@ mod tests {
                 Report::clear(),
             ]
         );
-        assert_eq!(tally.skipped, 6, "five prose or blank lines plus the trailing one");
+        assert_eq!(
+            tally.skipped, 6,
+            "five prose or blank lines plus the trailing one"
+        );
         assert_eq!(tally.unchanged, 1);
     }
 

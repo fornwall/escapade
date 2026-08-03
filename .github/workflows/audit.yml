@@ -1,0 +1,58 @@
+name: Audit
+
+# Kept out of ci.yml on purpose. A dependency advisory is not a property of the
+# commit under review: an untouched pull request can go red because someone
+# published an advisory overnight, which trains people to ignore a red X. So
+# this runs on its own schedule, and on pull requests only when the dependency
+# graph is the thing being changed — the one time the author can act on it.
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/audit.yml
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # `cargo audit` runs through the rustup proxy, which resolves
+      # rust-toolchain.toml and fails if that toolchain is absent.
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install --no-self-update
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # No `--deny warnings`. cargo-audit fails on vulnerabilities and merely
+      # prints informational advisories, which is the right split here: the
+      # lockfile currently carries two `unmaintained` notices for rustybuzz and
+      # ttf-parser, both pulled in transitively by resvg and neither fixable
+      # from this repository.
+      - name: Audit dependencies
+        run: cargo audit

@@ -167,13 +167,19 @@ fn extended(role: &str, params: &[Param], index: usize) -> (String, usize) {
                 (Some(red), Some(green), Some(blue)) => {
                     (format!("{role} {}", rgb(red, green, blue)), 5)
                 }
-                _ => (format!("{role} in 24-bit colour, with missing components"), 2),
+                _ => (
+                    format!("{role} in 24-bit colour, with missing components"),
+                    2,
+                ),
             }
         }
         Some(0) => (format!("an implementation-defined {role} colour"), 2),
         Some(1) => (format!("a transparent {role}"), 2),
         Some(3) => (format!("{role} in CMY, which almost nothing implements"), 2),
-        Some(4) => (format!("{role} in CMYK, which almost nothing implements"), 2),
+        Some(4) => (
+            format!("{role} in CMYK, which almost nothing implements"),
+            2,
+        ),
         Some(other) => (
             format!("{role} in colour space {other}, which is not in this table"),
             2,
@@ -197,11 +203,7 @@ fn colon_colour(role: &str, param: &Param) -> String {
             // five is the same thing with the empty field dropped, which is
             // common enough that refusing to read it would be unhelpful.
             let start = if param.len() >= 6 { 3 } else { 2 };
-            match (
-                param.sub(start),
-                param.sub(start + 1),
-                param.sub(start + 2),
-            ) {
+            match (param.sub(start), param.sub(start + 1), param.sub(start + 2)) {
                 (Some(red), Some(green), Some(blue)) => {
                     format!("{role} {}", rgb(red, green, blue))
                 }
@@ -266,7 +268,10 @@ mod tests {
         assert_eq!(described(b"\x1b[44m"), "background blue");
         assert_eq!(described(b"\x1b[91m"), "foreground bright red");
         assert_eq!(described(b"\x1b[107m"), "background bright white");
-        assert_eq!(described(b"\x1b[39;49m"), "the default foreground, the default background");
+        assert_eq!(
+            described(b"\x1b[39;49m"),
+            "the default foreground, the default background"
+        );
     }
 
     #[test]

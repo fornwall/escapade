@@ -363,18 +363,12 @@ fn parse_hex(whole: &str, hex: &str) -> Result<Color> {
              Accepted forms are {COLOR_FORMS}"
         );
     }
-    let digit = |index: usize| -> u8 {
-        u8::from_str_radix(&hex[index..=index], 16).unwrap_or(0)
-    };
+    let digit = |index: usize| -> u8 { u8::from_str_radix(&hex[index..=index], 16).unwrap_or(0) };
     let pair = |start: usize| -> u8 { u8::from_str_radix(&hex[start..start + 2], 16).unwrap_or(0) };
     match hex.len() {
         // `#abc` is `#aabbcc`: each digit doubled, so `#fff` is white rather than a
         // very dark grey. The CSS rule, and the only expansion anybody means.
-        3 => Ok(Color::Rgb(
-            digit(0) * 17,
-            digit(1) * 17,
-            digit(2) * 17,
-        )),
+        3 => Ok(Color::Rgb(digit(0) * 17, digit(1) * 17, digit(2) * 17)),
         6 => Ok(Color::Rgb(pair(0), pair(2), pair(4))),
         other => bail!(
             "`{whole}` has {other} hex digits; a hex colour needs either 3 (`#rgb`) or 6 \
@@ -499,7 +493,10 @@ fn read_colon_color(rest: &[&str], found: &mut Option<Color>) {
 fn read_semicolon_color(fields: &[&str], start: usize, found: &mut Option<Color>) -> usize {
     match fields.get(start).and_then(|text| text.parse::<u8>().ok()) {
         Some(5) => {
-            if let Some(index) = fields.get(start + 1).and_then(|text| text.parse::<u8>().ok()) {
+            if let Some(index) = fields
+                .get(start + 1)
+                .and_then(|text| text.parse::<u8>().ok())
+            {
                 *found = Some(Color::Palette(index));
                 return 2;
             }
@@ -857,7 +854,10 @@ mod tests {
             parse_reported_color("38;2;1;2;3;39", ColorRole::Foreground),
             None
         );
-        assert_eq!(parse_reported_color("48;5;4;49", ColorRole::Background), None);
+        assert_eq!(
+            parse_reported_color("48;5;4;49", ColorRole::Background),
+            None
+        );
         assert_eq!(
             parse_reported_color("58:5:9;59", ColorRole::Underline),
             None

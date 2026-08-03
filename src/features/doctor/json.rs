@@ -64,7 +64,11 @@ pub fn run_record(diagnosis: &Diagnosis<'_>) -> String {
     push_optional(&mut out, "terminfo_entry", diagnosis.terminfo.queried());
     out.push_str(",\"terminfo_read\":");
     out.push_str(bool_json(diagnosis.terminfo.entry().is_some()));
-    push_field(&mut out, "terminfo_status", &diagnosis.terminfo.explanation());
+    push_field(
+        &mut out,
+        "terminfo_status",
+        &diagnosis.terminfo.explanation(),
+    );
     push_optional(
         &mut out,
         "probe_channel",
@@ -73,18 +77,17 @@ pub fn run_record(diagnosis: &Diagnosis<'_>) -> String {
     push_optional(
         &mut out,
         "probe_failure",
-        diagnosis.no_channel.as_ref().map(|failure| failure.reason.as_str()),
+        diagnosis
+            .no_channel
+            .as_ref()
+            .map(|failure| failure.reason.as_str()),
     );
     push_optional(
         &mut out,
         "multiplexer",
         diagnosis.multiplexer.map(crate::term::Multiplexer::name),
     );
-    let _ = write!(
-        out,
-        ",\"timeout_ms\":{}",
-        diagnosis.timeout.as_millis()
-    );
+    let _ = write!(out, ",\"timeout_ms\":{}", diagnosis.timeout.as_millis());
     out.push_str(",\"probed\":");
     out.push_str(bool_json(diagnosis.probed()));
 
@@ -304,7 +307,11 @@ mod tests {
 
     fn row(check: &super::super::Check, readings: Vec<Reading>) -> Row<'_> {
         let agreement = agreement(&readings);
-        Row { check, readings, agreement }
+        Row {
+            check,
+            readings,
+            agreement,
+        }
     }
 
     fn empty_diagnosis(rows: Vec<Row<'_>>) -> Diagnosis<'_> {
@@ -429,7 +436,10 @@ mod tests {
         ));
         assert!(record.contains("\"agrees\":null"), "{record}");
         assert!(!record.contains("\"agrees\":false"), "{record}");
-        assert!(record.contains("\"agreement\":\"not-comparable\""), "{record}");
+        assert!(
+            record.contains("\"agreement\":\"not-comparable\""),
+            "{record}"
+        );
     }
 
     #[test]
@@ -601,8 +611,12 @@ mod tests {
         sorted.dedup();
         assert_eq!(sorted.len(), 3);
 
-        let agreements =
-            [Agreement::Agree, Agreement::Disagree, Agreement::NotComparable].map(agreement_key);
+        let agreements = [
+            Agreement::Agree,
+            Agreement::Disagree,
+            Agreement::NotComparable,
+        ]
+        .map(agreement_key);
         let mut sorted = agreements.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -615,7 +629,10 @@ mod tests {
         diagnosis.channel = Some(Channel::Ctty);
         diagnosis.no_channel = None;
         let record = run_record(&diagnosis);
-        assert!(record.contains("\"probe_channel\":\"/dev/tty\""), "{record}");
+        assert!(
+            record.contains("\"probe_channel\":\"/dev/tty\""),
+            "{record}"
+        );
         assert!(record.contains("\"probe_failure\":null"), "{record}");
     }
 }

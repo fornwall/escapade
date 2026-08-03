@@ -65,7 +65,9 @@ fn run(cli: &Cli) -> anyhow::Result<ExitCode> {
         Command::GlyphProtocol(command) => {
             features::glyph_protocol::run(&catalog, command, cli.no_color)
         }
-        Command::Graphics(command) => features::kitty_graphics::run(&catalog, command, cli.no_color),
+        Command::Graphics(command) => {
+            features::kitty_graphics::run(&catalog, command, cli.no_color)
+        }
         Command::Grapheme(command) => features::grapheme::run(&catalog, command, cli.no_color),
         Command::Hyperlink(command) => features::hyperlink::run(&catalog, command, cli.no_color),
         Command::Notification(command) => {
@@ -76,9 +78,7 @@ fn run(cli: &Cli) -> anyhow::Result<ExitCode> {
         Command::Color(command) => features::color::run(&catalog, command, cli.no_color),
         Command::Clipboard(command) => features::clipboard::run(&catalog, command, cli.no_color),
         Command::Style(command) => features::style::run(&catalog, command, cli.no_color),
-        Command::Dimensions(command) => {
-            features::dimensions::run(&catalog, command, cli.no_color)
-        }
+        Command::Dimensions(command) => features::dimensions::run(&catalog, command, cli.no_color),
         Command::Unscroll(command) => features::unscroll::run(&catalog, command, cli.no_color),
         Command::Keys(command) => features::keys::run(&catalog, command, cli.no_color),
         Command::Decode(command) => features::decode::run(&catalog, command, cli.no_color),

@@ -274,7 +274,13 @@ pub fn probe(catalog: &Catalog, term: &mut Term, input: &mut InputReader) -> Res
         // silent by design actually silent.
         if !outcome.answered_barrier
             && let Ok(Some(reply)) = input.wait_for_reply(DRAIN_TIMEOUT, |reply| {
-                matches!(reply, Reply::Csi { final_byte: 'c', .. })
+                matches!(
+                    reply,
+                    Reply::Csi {
+                        final_byte: 'c',
+                        ..
+                    }
+                )
             })
         {
             outcome.replies.push(reply);
@@ -508,7 +514,10 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
     }
     println!();
 
-    println!("  {}", theme.paint("what the environment says", Ink::Accent));
+    println!(
+        "  {}",
+        theme.paint("what the environment says", Ink::Accent)
+    );
     if outcome.evidence.is_empty() {
         println!(
             "    {}",
@@ -806,7 +815,11 @@ mod tests {
             ..ProbeOutcome::default()
         };
         assert_eq!(outcome.support(), Support::Unknown);
-        assert!(outcome.reason().contains("no query"), "{}", outcome.reason());
+        assert!(
+            outcome.reason().contains("no query"),
+            "{}",
+            outcome.reason()
+        );
     }
 
     #[test]
@@ -825,8 +838,22 @@ mod tests {
         let catalog = Catalog::load().unwrap();
         let feature = catalog.feature(FEATURE_ID).unwrap();
         for name in [
-            "kitty", "mintty", "contour", "ghostty", "wezterm", "alacritty", "foot", "xterm",
-            "konsole", "windows terminal", "vscode", "vte", "rio", "tmux", "zellij", "screen",
+            "kitty",
+            "mintty",
+            "contour",
+            "ghostty",
+            "wezterm",
+            "alacritty",
+            "foot",
+            "xterm",
+            "konsole",
+            "windows terminal",
+            "vscode",
+            "vte",
+            "rio",
+            "tmux",
+            "zellij",
+            "screen",
         ] {
             let id = registry_id_for(name).unwrap_or_else(|| panic!("{name} matched nothing"));
             assert!(

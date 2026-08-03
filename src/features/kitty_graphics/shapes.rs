@@ -59,7 +59,9 @@ pub fn name(shape: Shape) -> &'static str {
 pub fn purpose(shape: Shape) -> &'static str {
     match shape {
         Shape::Gradient => "a smooth two-axis ramp — shows colour quantisation and dithering",
-        Shape::Checkerboard => "opaque and transparent squares — shows what alpha composites against",
+        Shape::Checkerboard => {
+            "opaque and transparent squares — shows what alpha composites against"
+        }
         Shape::ColorWheel => "hue around, saturation outwards — shows the colour space",
         Shape::Mandelbrot => "fine detail everywhere — shows what scaling to cells costs",
         Shape::Rings => "concentric rings — makes resampling moiré obvious",
@@ -216,8 +218,8 @@ pub fn test_card(width: u32, height: u32) -> Result<Rgba> {
             return [0xff, 0x30, 0x30, 0xff];
         }
         // Corner brackets, in case the border is lost to rounding.
-        let near_corner = (x < bracket || x > last_x - bracket)
-            && (y < bracket || y > last_y - bracket);
+        let near_corner =
+            (x < bracket || x > last_x - bracket) && (y < bracket || y > last_y - bracket);
         if near_corner && (x < 3 || y < 3 || x > last_x - 3 || y > last_y - 3) {
             return [0xff, 0xff, 0xff, 0xff];
         }
@@ -397,7 +399,11 @@ mod tests {
         // (-0.5, 0) is deep inside the cardioid; with left=-2.2, right=0.8 that
         // is x = (−0.5 + 2.2)/3 * 128 ≈ 72, y = 64.
         let inside = image.get(72, 64);
-        assert_eq!(inside, [0x10, 0x10, 0x18, 0xff], "interior is flat and dark");
+        assert_eq!(
+            inside,
+            [0x10, 0x10, 0x18, 0xff],
+            "interior is flat and dark"
+        );
         // The far left of the view is well outside the set.
         let outside = image.get(1, 64);
         assert_ne!(outside, inside);
@@ -416,7 +422,10 @@ mod tests {
             .windows(2)
             .filter(|pair| (pair[0] < 128) != (pair[1] < 128))
             .count();
-        assert!(crossings >= 8, "expected several rings, counted {crossings}");
+        assert!(
+            crossings >= 8,
+            "expected several rings, counted {crossings}"
+        );
     }
 
     #[test]

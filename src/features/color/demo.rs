@@ -494,7 +494,12 @@ fn step_round_trip(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.blank();
 
     let answers = ctx.ask(&[Target::Background, Target::Foreground, Target::Cursor])?;
-    ctx.indented(2, &ctx.theme.paint("what this terminal just said:", Ink::Accent).clone())?;
+    ctx.indented(
+        2,
+        &ctx.theme
+            .paint("what this terminal just said:", Ink::Accent)
+            .clone(),
+    )?;
     ctx.blank();
     for answer in &answers.answers.clone() {
         ctx.colour_row(answer)?;
@@ -638,7 +643,10 @@ fn step_palette(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.sequence(
         &Target::Palette(1).query(),
         &[
-            ("4", "the indexed palette, rather than a named dynamic colour."),
+            (
+                "4",
+                "the indexed palette, rather than a named dynamic colour.",
+            ),
             ("1", "the entry: 0 to 255. Here, ANSI red."),
             (
                 "?",
@@ -769,8 +777,11 @@ fn step_scheme(ctx: &mut Ctx<'_>) -> Result<Flow> {
             "listening for {}s more — or press space to move on",
             left.as_secs()
         );
-        ctx.term
-            .put(MARGIN + 2, listening_row, &ctx.theme.paint(&countdown, Ink::Muted))?;
+        ctx.term.put(
+            MARGIN + 2,
+            listening_row,
+            &ctx.theme.paint(&countdown, Ink::Muted),
+        )?;
         ctx.term.clear_to_eol()?;
         ctx.term.flush()?;
 
@@ -787,11 +798,7 @@ fn step_scheme(ctx: &mut Ctx<'_>) -> Result<Flow> {
                         "{}  {}  {}",
                         ctx.theme.paint("→ unprompted", Ink::Good),
                         ctx.theme.paint(
-                            &format!(
-                                "CSI ? {} ; {} n",
-                                notify::REPORT_PS,
-                                scheme.value()
-                            ),
+                            &format!("CSI ? {} ; {} n", notify::REPORT_PS, scheme.value()),
                             Ink::Code
                         ),
                         ctx.theme.paint(scheme.as_str(), Ink::Strong)
@@ -848,7 +855,9 @@ fn step_leave(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.blank();
     ctx.indented(
         2,
-        &ctx.theme.paint(&pretty(&notify::disable()), Ink::Code).clone(),
+        &ctx.theme
+            .paint(&pretty(&notify::disable()), Ink::Code)
+            .clone(),
     )?;
     ctx.blank();
 
@@ -870,11 +879,20 @@ fn step_leave(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.para("Where to go next:")?;
     ctx.blank();
     for (command, what) in [
-        ("escapade color", "the one-shot report you just walked through"),
-        ("escapade color --is-dark", "the same question as an exit status"),
+        (
+            "escapade color",
+            "the one-shot report you just walked through",
+        ),
+        (
+            "escapade color --is-dark",
+            "the same question as an exit status",
+        ),
         ("escapade color --watch", "one line per change, forever"),
         ("escapade color probe", "the two verdicts, separately"),
-        ("escapade color explain", "the protocol, and who implements it"),
+        (
+            "escapade color explain",
+            "the protocol, and who implements it",
+        ),
     ] {
         let text = format!(
             "{}  {}",
@@ -903,8 +921,7 @@ mod tests {
         assert_eq!(sorted.len(), total, "two steps share a name");
         for name in names {
             assert!(
-                name.chars()
-                    .all(|ch| ch.is_ascii_lowercase() || ch == '-'),
+                name.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-'),
                 "{name} is not kebab-case"
             );
         }

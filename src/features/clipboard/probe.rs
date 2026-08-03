@@ -526,7 +526,13 @@ pub fn probe(catalog: &Catalog, term: &mut Term, input: &mut InputReader) -> Res
         // shell, which prints it as stray text.
         if !outcome.answered_barrier
             && let Ok(Some(reply)) = input.wait_for_reply(DRAIN_TIMEOUT, |reply| {
-                matches!(reply, Reply::Csi { final_byte: 'c', .. })
+                matches!(
+                    reply,
+                    Reply::Csi {
+                        final_byte: 'c',
+                        ..
+                    }
+                )
             })
         {
             if let Reply::Csi { params, .. } = &reply
@@ -691,10 +697,7 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
     let width = theme.width().saturating_sub(6);
 
     println!();
-    println!(
-        "  {}",
-        theme.paint("Clipboard access (OSC 52)", Ink::Title)
-    );
+    println!("  {}", theme.paint("Clipboard access (OSC 52)", Ink::Title));
     println!();
     for line in wrap(
         "Writing has no reply, so it cannot be tested by doing it. What can be tested is the \
@@ -808,9 +811,15 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
     );
 
     println!();
-    println!("  {}", theme.paint("evidence, most trustworthy first", Ink::Accent));
+    println!(
+        "  {}",
+        theme.paint("evidence, most trustworthy first", Ink::Accent)
+    );
     if outcome.evidence.is_empty() {
-        println!("    {}", theme.paint("nothing identified this terminal", Ink::Muted));
+        println!(
+            "    {}",
+            theme.paint("nothing identified this terminal", Ink::Muted)
+        );
     }
     for item in &outcome.evidence {
         let implies = item.implies.unwrap_or("nothing escapade has a row for");
@@ -877,7 +886,11 @@ mod tests {
         let probe = outcome(Some("62;22;28;52"), None);
         assert_eq!(probe.support(), Support::Yes);
         assert!(probe.measured());
-        assert!(probe.reason().contains("may only advertise"), "{}", probe.reason());
+        assert!(
+            probe.reason().contains("may only advertise"),
+            "{}",
+            probe.reason()
+        );
     }
 
     #[test]
@@ -888,7 +901,11 @@ mod tests {
         let probe = outcome(Some("62;1;4"), None);
         assert_eq!(probe.support(), Support::Unknown);
         assert!(!probe.measured());
-        assert!(probe.reason().contains("not a refusal"), "{}", probe.reason());
+        assert!(
+            probe.reason().contains("not a refusal"),
+            "{}",
+            probe.reason()
+        );
     }
 
     #[test]
@@ -969,7 +986,11 @@ mod tests {
         let mut probe = outcome(None, None);
         probe.interactive = false;
         assert_eq!(probe.support(), Support::Unknown);
-        assert!(probe.reason().contains("not both terminals"), "{}", probe.reason());
+        assert!(
+            probe.reason().contains("not both terminals"),
+            "{}",
+            probe.reason()
+        );
         // And the reason says the useful part: copying still works in a pipe.
         assert!(probe.reason().contains("copying"), "{}", probe.reason());
     }
@@ -988,12 +1009,18 @@ mod tests {
         let measured = json_line(&outcome(Some("62;52"), None));
         assert!(measured.contains("\"measurable\":true"), "{measured}");
         assert!(measured.contains("\"advertised\":true"), "{measured}");
-        assert!(measured.contains("\"device_attributes\":\"62;52\""), "{measured}");
+        assert!(
+            measured.contains("\"device_attributes\":\"62;52\""),
+            "{measured}"
+        );
 
         let inferred = json_line(&outcome(Some("62;1"), Some("kitty 0.44.0")));
         assert!(inferred.contains("\"measurable\":false"), "{inferred}");
         assert!(inferred.contains("\"advertised\":false"), "{inferred}");
-        assert!(inferred.contains("\"xtversion\":\"kitty 0.44.0\""), "{inferred}");
+        assert!(
+            inferred.contains("\"xtversion\":\"kitty 0.44.0\""),
+            "{inferred}"
+        );
     }
 
     #[test]
@@ -1051,9 +1078,25 @@ mod tests {
             assert!(catalog.terminal(id).is_some(), "unknown terminal id `{id}`");
         }
         for name in [
-            "kitty", "ghostty", "wezterm", "alacritty", "foot", "contour", "iTerm2", "konsole",
-            "gnome-terminal", "mintty", "rio", "st", "xterm", "tmux", "zellij", "screen",
-            "Windows Terminal", "vscode", "warp",
+            "kitty",
+            "ghostty",
+            "wezterm",
+            "alacritty",
+            "foot",
+            "contour",
+            "iTerm2",
+            "konsole",
+            "gnome-terminal",
+            "mintty",
+            "rio",
+            "st",
+            "xterm",
+            "tmux",
+            "zellij",
+            "screen",
+            "Windows Terminal",
+            "vscode",
+            "warp",
         ] {
             if let Some(id) = registry_id_for(name) {
                 assert!(

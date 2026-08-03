@@ -243,7 +243,10 @@ impl Sizes {
     pub fn answers(&self) -> [(&'static str, bool); 3] {
         [
             (Origin::CellsReport.as_str(), self.reported_cells.is_some()),
-            (Origin::WindowReport.as_str(), self.reported_window.is_some()),
+            (
+                Origin::WindowReport.as_str(),
+                self.reported_window.is_some(),
+            ),
             (Origin::CellReport.as_str(), self.reported_cell.is_some()),
         ]
     }

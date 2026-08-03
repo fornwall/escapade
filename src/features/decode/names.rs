@@ -66,19 +66,31 @@ pub fn control(byte: u8) -> Meaning {
         0x02 => ("STX", "start of text"),
         0x03 => ("ETX", "end of text; what Ctrl+C sends"),
         0x04 => ("EOT", "end of transmission; what Ctrl+D sends"),
-        0x05 => ("ENQ", "enquiry; some terminals answer with an answerback string"),
+        0x05 => (
+            "ENQ",
+            "enquiry; some terminals answer with an answerback string",
+        ),
         0x06 => ("ACK", "acknowledge"),
         0x07 => ("BEL", "ring the bell, or flash the window"),
         0x08 => ("BS", "move the cursor back one column"),
         0x09 => ("HT", "move to the next tab stop"),
         0x0a => ("LF", "move down one row"),
-        0x0b => ("VT", "vertical tab; treated as a line feed nearly everywhere"),
-        0x0c => ("FF", "form feed; treated as a line feed, or clears the screen"),
+        0x0b => (
+            "VT",
+            "vertical tab; treated as a line feed nearly everywhere",
+        ),
+        0x0c => (
+            "FF",
+            "form feed; treated as a line feed, or clears the screen",
+        ),
         0x0d => ("CR", "move to the first column"),
         0x0e => ("SO", "shift out: use the G1 character set from here on"),
         0x0f => ("SI", "shift in: return to the G0 character set"),
         0x10 => ("DLE", "data link escape"),
-        0x11 => ("DC1", "device control 1; XON, which resumes a paused terminal"),
+        0x11 => (
+            "DC1",
+            "device control 1; XON, which resumes a paused terminal",
+        ),
         0x12 => ("DC2", "device control 2"),
         0x13 => ("DC3", "device control 3; XOFF, which pauses output"),
         0x14 => ("DC4", "device control 4"),
@@ -87,13 +99,19 @@ pub fn control(byte: u8) -> Meaning {
         0x17 => ("ETB", "end of transmission block"),
         0x18 => ("CAN", "cancel: abandon the sequence in progress"),
         0x19 => ("EM", "end of medium"),
-        0x1a => ("SUB", "substitute: stands in for a character that was invalid"),
+        0x1a => (
+            "SUB",
+            "substitute: stands in for a character that was invalid",
+        ),
         0x1b => ("ESC", "escape, with nothing after it"),
         0x1c => ("FS", "file separator"),
         0x1d => ("GS", "group separator"),
         0x1e => ("RS", "record separator"),
         0x1f => ("US", "unit separator"),
-        0x7f => ("DEL", "delete; padding, historically a punched-out character"),
+        0x7f => (
+            "DEL",
+            "delete; padding, historically a punched-out character",
+        ),
         _ => ("", "not a control byte"),
     };
     Meaning {
@@ -142,7 +160,10 @@ pub fn escape_sequence(intermediates: &[u8], final_byte: u8) -> Option<Meaning> 
         ([], b'6') => meaning("DECBI", "back index: scroll right when at the left margin"),
         ([], b'7') => meaning("DECSC", "save the cursor position and attributes"),
         ([], b'8') => meaning("DECRC", "restore the saved cursor position and attributes"),
-        ([], b'9') => meaning("DECFI", "forward index: scroll left when at the right margin"),
+        ([], b'9') => meaning(
+            "DECFI",
+            "forward index: scroll left when at the right margin",
+        ),
         ([], b'=') => meaning("DECKPAM", "put the numeric keypad in application mode"),
         ([], b'>') => meaning("DECKPNM", "put the numeric keypad in numeric mode"),
         ([], b'D') => meaning("IND", "move down one row, scrolling if needed"),
@@ -151,7 +172,10 @@ pub fn escape_sequence(intermediates: &[u8], final_byte: u8) -> Option<Meaning> 
         ([], b'M') => meaning("RI", "move up one row, scrolling if needed"),
         ([], b'V') => meaning("SPA", "start of a protected area"),
         ([], b'W') => meaning("EPA", "end of a protected area"),
-        ([], b'Z') => meaning("DECID", "ask the terminal to identify itself; use CSI c instead"),
+        ([], b'Z') => meaning(
+            "DECID",
+            "ask the terminal to identify itself; use CSI c instead",
+        ),
         ([], b'c') => meaning("RIS", "reset the terminal to its power-up state"),
         ([], b'l') => meaning("", "lock the memory above the cursor (HP)"),
         ([], b'm') => meaning("", "unlock memory (HP)"),
@@ -170,7 +194,10 @@ pub fn escape_sequence(intermediates: &[u8], final_byte: u8) -> Option<Meaning> 
         ([b'#'], b'4') => meaning("DECDHL", "double-height line, bottom half"),
         ([b'#'], b'5') => meaning("DECSWL", "single-width line"),
         ([b'#'], b'6') => meaning("DECDWL", "double-width line"),
-        ([b'#'], b'8') => meaning("DECALN", "fill the screen with E, an alignment test pattern"),
+        ([b'#'], b'8') => meaning(
+            "DECALN",
+            "fill the screen with E, an alignment test pattern",
+        ),
         ([b'%'], b'@') => meaning("", "interpret output as ISO 8859-1"),
         ([b'%'], b'G' | b'8') => meaning("", "interpret output as UTF-8"),
         ([b'('..=b'+' | b'-'..=b'/'], _) => charset(intermediates, final_byte),
@@ -237,30 +264,68 @@ pub fn csi(fields: &Fields) -> Option<Meaning> {
 
 /// `CSI` with no private marker: ECMA-48's own repertoire, plus the DEC and xterm
 /// sequences that share it.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one match arm per final byte — a table, and splitting it would scatter the repertoire"
+)]
 fn csi_standard(fields: &Fields) -> Option<Meaning> {
     let first = fields.value_or(0, 1);
     let selector = fields.value_or(0, 0);
     match (fields.intermediates.as_slice(), fields.final_byte) {
-        ([], b'@') => meaning("ICH", format!("insert {} at the cursor", count(first, "blank character"))),
+        ([], b'@') => meaning(
+            "ICH",
+            format!("insert {} at the cursor", count(first, "blank character")),
+        ),
         ([], b'A') => meaning("CUU", format!("move the cursor up {}", count(first, "row"))),
-        ([], b'B') => meaning("CUD", format!("move the cursor down {}", count(first, "row"))),
-        ([], b'C') => meaning("CUF", format!("move the cursor right {}", count(first, "column"))),
-        ([], b'D') => meaning("CUB", format!("move the cursor left {}", count(first, "column"))),
-        ([], b'E') => meaning("CNL", format!("move to column 1, {} down", count(first, "row"))),
-        ([], b'F') => meaning("CPL", format!("move to column 1, {} up", count(first, "row"))),
+        ([], b'B') => meaning(
+            "CUD",
+            format!("move the cursor down {}", count(first, "row")),
+        ),
+        ([], b'C') => meaning(
+            "CUF",
+            format!("move the cursor right {}", count(first, "column")),
+        ),
+        ([], b'D') => meaning(
+            "CUB",
+            format!("move the cursor left {}", count(first, "column")),
+        ),
+        ([], b'E') => meaning(
+            "CNL",
+            format!("move to column 1, {} down", count(first, "row")),
+        ),
+        ([], b'F') => meaning(
+            "CPL",
+            format!("move to column 1, {} up", count(first, "row")),
+        ),
         ([], b'G') => meaning("CHA", format!("move the cursor to column {first}")),
         ([], b'H' | b'f') => {
             let row = fields.value_or(0, 1);
             let column = fields.value_or(1, 1);
-            let mnemonic = if fields.final_byte == b'H' { "CUP" } else { "HVP" };
-            meaning(mnemonic, format!("move the cursor to row {row}, column {column}"))
+            let mnemonic = if fields.final_byte == b'H' {
+                "CUP"
+            } else {
+                "HVP"
+            };
+            meaning(
+                mnemonic,
+                format!("move the cursor to row {row}, column {column}"),
+            )
         }
         ([], b'I') => meaning("CHT", format!("move forward {}", count(first, "tab stop"))),
         ([], b'J') => meaning("ED", erase_in_display(selector)),
         ([], b'K') => meaning("EL", erase_in_line(selector)),
-        ([], b'L') => meaning("IL", format!("insert {} at the cursor", count(first, "row"))),
-        ([], b'M') => meaning("DL", format!("delete {} at the cursor", count(first, "row"))),
-        ([], b'P') => meaning("DCH", format!("delete {} at the cursor", count(first, "character"))),
+        ([], b'L') => meaning(
+            "IL",
+            format!("insert {} at the cursor", count(first, "row")),
+        ),
+        ([], b'M') => meaning(
+            "DL",
+            format!("delete {} at the cursor", count(first, "row")),
+        ),
+        ([], b'P') => meaning(
+            "DCH",
+            format!("delete {} at the cursor", count(first, "character")),
+        ),
         ([], b'R') => meaning(
             "CPR",
             format!(
@@ -269,10 +334,14 @@ fn csi_standard(fields: &Fields) -> Option<Meaning> {
                 fields.value_or(1, 1)
             ),
         ),
-        ([], b'S') => meaning("SU", format!("scroll the screen up {}", count(first, "row"))),
-        ([], b'T' | b'^') => {
-            meaning("SD", format!("scroll the screen down {}", count(first, "row")))
-        }
+        ([], b'S') => meaning(
+            "SU",
+            format!("scroll the screen up {}", count(first, "row")),
+        ),
+        ([], b'T' | b'^') => meaning(
+            "SD",
+            format!("scroll the screen down {}", count(first, "row")),
+        ),
         ([b'+'], b'T') => meaning(
             "",
             format!(
@@ -282,18 +351,30 @@ fn csi_standard(fields: &Fields) -> Option<Meaning> {
         ),
         ([], b'X') => meaning(
             "ECH",
-            format!("erase {} in place, without moving anything", count(first, "character")),
+            format!(
+                "erase {} in place, without moving anything",
+                count(first, "character")
+            ),
         ),
         ([], b'Z') => meaning("CBT", format!("move back {}", count(first, "tab stop"))),
         ([], b'`') => meaning("HPA", format!("move the cursor to column {first}")),
-        ([], b'a') => meaning("HPR", format!("move the cursor right {}", count(first, "column"))),
-        ([], b'b') => meaning("REP", format!("repeat the previous character {first} times")),
+        ([], b'a') => meaning(
+            "HPR",
+            format!("move the cursor right {}", count(first, "column")),
+        ),
+        ([], b'b') => meaning(
+            "REP",
+            format!("repeat the previous character {first} times"),
+        ),
         ([], b'c') => meaning(
             "DA1",
             "ask the terminal what it is — the barrier every terminal answers",
         ),
         ([], b'd') => meaning("VPA", format!("move the cursor to row {first}")),
-        ([], b'e') => meaning("VPR", format!("move the cursor down {}", count(first, "row"))),
+        ([], b'e') => meaning(
+            "VPR",
+            format!("move the cursor down {}", count(first, "row")),
+        ),
         ([], b'g') => meaning(
             "TBC",
             match selector {
@@ -305,7 +386,10 @@ fn csi_standard(fields: &Fields) -> Option<Meaning> {
         ([], b'i') => meaning("MC", media_copy(selector)),
         ([], b'l') => meaning("RM", modes(fields, ModeKind::Ansi, false)),
         ([], b'n') => meaning("DSR", device_status(selector)),
-        ([b'!'], b'p') => meaning("DECSTR", "soft reset: modes, margins, attributes and tab stops"),
+        ([b'!'], b'p') => meaning(
+            "DECSTR",
+            "soft reset: modes, margins, attributes and tab stops",
+        ),
         ([b'"'], b'p') => meaning("DECSCL", format!("set conformance level {first}")),
         ([b'$'], b'p') => meaning(
             "DECRQM",
@@ -330,8 +414,14 @@ fn csi_standard(fields: &Fields) -> Option<Meaning> {
         ([b'$'], b'{') => meaning("DECSERA", "selectively erase a rectangle"),
         ([b'\''], b'}') => meaning("DECIC", format!("insert {}", count(first, "column"))),
         ([b'\''], b'~') => meaning("DECDC", format!("delete {}", count(first, "column"))),
-        ([b'$'], b'|') => meaning("DECSCPP", format!("set the page to {} wide", count(first, "column"))),
-        ([b'*'], b'|') => meaning("DECSNLS", format!("set the page to {} tall", count(first, "row"))),
+        ([b'$'], b'|') => meaning(
+            "DECSCPP",
+            format!("set the page to {} wide", count(first, "column")),
+        ),
+        ([b'*'], b'|') => meaning(
+            "DECSNLS",
+            format!("set the page to {} tall", count(first, "row")),
+        ),
         _ => None,
     }
 }
@@ -343,7 +433,10 @@ fn csi_dec_private(fields: &Fields) -> Option<Meaning> {
     match (fields.intermediates.as_slice(), fields.final_byte) {
         ([], b'h') => meaning("DECSET", modes(fields, ModeKind::DecPrivate, true)),
         ([], b'l') => meaning("DECRST", modes(fields, ModeKind::DecPrivate, false)),
-        ([b'$'], b'p') => meaning("DECRQM", format!("ask whether {} is set", mode_phrase(selector))),
+        ([b'$'], b'p') => meaning(
+            "DECRQM",
+            format!("ask whether {} is set", mode_phrase(selector)),
+        ),
         ([b'$'], b'y') => meaning(
             "DECRPM",
             format!(
@@ -352,7 +445,10 @@ fn csi_dec_private(fields: &Fields) -> Option<Meaning> {
                 mode_state(fields.value_or(1, 0))
             ),
         ),
-        ([], b'J') => meaning("DECSED", format!("selectively {}", erase_in_display(selector))),
+        ([], b'J') => meaning(
+            "DECSED",
+            format!("selectively {}", erase_in_display(selector)),
+        ),
         ([], b'K') => meaning("DECSEL", format!("selectively {}", erase_in_line(selector))),
         ([], b'n') => meaning("DECDSR", device_status(selector)),
         ([], b'W') => meaning("DECST8C", "reset tab stops to every eighth column"),
@@ -367,8 +463,14 @@ fn csi_greater(fields: &Fields) -> Option<Meaning> {
     match (fields.intermediates.as_slice(), fields.final_byte) {
         ([], b'c') => meaning("DA2", "ask for the terminal's firmware version"),
         ([], b'q') => meaning("XTVERSION", "ask the terminal for its name and version"),
-        ([], b'm') => meaning("XTMODKEYS", "configure how modifiers are encoded in key reports"),
-        ([], b'p') => meaning("XTSMPOINTER", "set when the mouse pointer hides while typing"),
+        ([], b'm') => meaning(
+            "XTMODKEYS",
+            "configure how modifiers are encoded in key reports",
+        ),
+        ([], b'p') => meaning(
+            "XTSMPOINTER",
+            "set when the mouse pointer hides while typing",
+        ),
         ([], b'u') => meaning(
             "",
             format!(
@@ -565,7 +667,10 @@ fn modes(fields: &Fields, kind: ModeKind, set: bool) -> String {
         })
         .collect();
     if described.is_empty() {
-        return format!("{} nothing: no mode number was given", if set { "set" } else { "reset" });
+        return format!(
+            "{} nothing: no mode number was given",
+            if set { "set" } else { "reset" }
+        );
     }
     described.join(", then ")
 }
@@ -617,8 +722,16 @@ fn mode_state(value: u32) -> &'static str {
 fn ansi_mode(number: u32) -> Option<(&'static str, &'static str, Verbs)> {
     match number {
         2 => Some(("KAM", "the keyboard lock", Verbs::Enable)),
-        3 => Some(("CRM", "showing control characters instead of acting on them", Verbs::Enable)),
-        4 => Some(("IRM", "insert mode, where typing pushes text right", Verbs::Enable)),
+        3 => Some((
+            "CRM",
+            "showing control characters instead of acting on them",
+            Verbs::Enable,
+        )),
+        4 => Some((
+            "IRM",
+            "insert mode, where typing pushes text right",
+            Verbs::Enable,
+        )),
         12 => Some(("SRM", "local echo", Verbs::Enable)),
         20 => Some(("LNM", "treating a line feed as a new line", Verbs::Enable)),
         _ => None,
@@ -631,42 +744,106 @@ fn ansi_mode(number: u32) -> Option<(&'static str, &'static str, Verbs)> {
 /// them unimplemented — but everything a modern application actually sets is
 /// here, plus the several ways of reaching the alternate screen, which are the
 /// commonest thing to see and the easiest to confuse.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one match arm per mode number — a table, and splitting it would scatter the modes"
+)]
 fn dec_mode(number: u32) -> Option<(&'static str, &'static str, Verbs)> {
     let entry = match number {
-        1 => ("DECCKM", "application cursor keys, where arrows send ESC O A", Verbs::Enable),
+        1 => (
+            "DECCKM",
+            "application cursor keys, where arrows send ESC O A",
+            Verbs::Enable,
+        ),
         2 => ("DECANM", "VT52 compatibility mode", Verbs::Enable),
-        3 => ("DECCOLM", "132-column mode, which clears the screen", Verbs::Enable),
+        3 => (
+            "DECCOLM",
+            "132-column mode, which clears the screen",
+            Verbs::Enable,
+        ),
         4 => ("DECSCLM", "smooth scrolling", Verbs::Enable),
-        5 => ("DECSCNM", "reverse video for the whole screen", Verbs::Enable),
-        6 => ("DECOM", "origin mode, where row 1 is the top of the scrolling region", Verbs::Enable),
+        5 => (
+            "DECSCNM",
+            "reverse video for the whole screen",
+            Verbs::Enable,
+        ),
+        6 => (
+            "DECOM",
+            "origin mode, where row 1 is the top of the scrolling region",
+            Verbs::Enable,
+        ),
         7 => ("DECAWM", "autowrap at the right margin", Verbs::Enable),
         8 => ("DECARM", "auto-repeat when a key is held", Verbs::Enable),
-        9 => ("", "X10 mouse reporting, which reports presses only", Verbs::Enable),
+        9 => (
+            "",
+            "X10 mouse reporting, which reports presses only",
+            Verbs::Enable,
+        ),
         12 => ("", "a blinking cursor", Verbs::Enable),
         25 => ("DECTCEM", "the cursor", Verbs::Show),
         45 => ("", "reverse wraparound", Verbs::Enable),
-        47 => ("", "the alternate screen, without saving the cursor", Verbs::Enter),
+        47 => (
+            "",
+            "the alternate screen, without saving the cursor",
+            Verbs::Enter,
+        ),
         66 => ("DECNKM", "the application keypad", Verbs::Enable),
-        67 => ("DECBKM", "sending backspace rather than delete", Verbs::Enable),
+        67 => (
+            "DECBKM",
+            "sending backspace rather than delete",
+            Verbs::Enable,
+        ),
         69 => ("DECLRMM", "left and right margins", Verbs::Enable),
         80 => ("DECSDM", "sixel scrolling", Verbs::Enable),
-        1000 => ("", "mouse reporting for presses and releases", Verbs::Enable),
+        1000 => (
+            "",
+            "mouse reporting for presses and releases",
+            Verbs::Enable,
+        ),
         1001 => ("", "mouse highlight tracking", Verbs::Enable),
         1002 => ("", "mouse reporting including drags", Verbs::Enable),
         1003 => ("", "mouse reporting for every movement", Verbs::Enable),
         1004 => ("", "focus in and focus out reporting", Verbs::Enable),
-        1005 => ("", "UTF-8 mouse coordinates, which are ambiguous past column 95", Verbs::Enable),
-        1006 => ("", "SGR mouse coordinates, which work past column 223", Verbs::Enable),
+        1005 => (
+            "",
+            "UTF-8 mouse coordinates, which are ambiguous past column 95",
+            Verbs::Enable,
+        ),
+        1006 => (
+            "",
+            "SGR mouse coordinates, which work past column 223",
+            Verbs::Enable,
+        ),
         1015 => ("", "urxvt mouse coordinates", Verbs::Enable),
         1016 => ("", "SGR-pixel mouse coordinates", Verbs::Enable),
-        1034 => ("", "treating the eighth bit as a meta modifier", Verbs::Enable),
-        1047 => ("", "the alternate screen, clearing it on the way out", Verbs::Enter),
+        1034 => (
+            "",
+            "treating the eighth bit as a meta modifier",
+            Verbs::Enable,
+        ),
+        1047 => (
+            "",
+            "the alternate screen, clearing it on the way out",
+            Verbs::Enter,
+        ),
         1048 => ("", "saving the cursor position", Verbs::Enable),
         1049 => ("", "the alternate screen", Verbs::Enter),
-        2004 => ("", "bracketed paste, which fences pasted text", Verbs::Enable),
-        2026 => ("", "synchronized output, so a frame is presented at once", Verbs::Begin),
+        2004 => (
+            "",
+            "bracketed paste, which fences pasted text",
+            Verbs::Enable,
+        ),
+        2026 => (
+            "",
+            "synchronized output, so a frame is presented at once",
+            Verbs::Begin,
+        ),
         2027 => ("", "grapheme clustering by UAX #29", Verbs::Enable),
-        2031 => ("", "notifications when the colour scheme changes", Verbs::Enable),
+        2031 => (
+            "",
+            "notifications when the colour scheme changes",
+            Verbs::Enable,
+        ),
         2048 => ("", "in-band resize notifications", Verbs::Enable),
         7727 => ("", "application escape mode (mintty)", Verbs::Enable),
         9001 => ("", "win32 input mode", Verbs::Enable),
@@ -692,21 +869,39 @@ pub fn osc(fields: &[&str]) -> Option<Meaning> {
     let rest = |index: usize| fields.get(index).copied().unwrap_or_default();
     let joined = |index: usize| fields.get(index..).unwrap_or_default().join(";");
     match number {
-        "0" => meaning("", format!("set the window title and icon name to {}", short(&joined(1)))),
+        "0" => meaning(
+            "",
+            format!(
+                "set the window title and icon name to {}",
+                short(&joined(1))
+            ),
+        ),
         "1" => meaning("", format!("set the icon name to {}", short(&joined(1)))),
         "2" => meaning("", format!("set the window title to {}", short(&joined(1)))),
         "4" => meaning("", palette(fields)),
-        "7" => meaning("", format!("report the working directory as {}", short(&joined(1)))),
+        "7" => meaning(
+            "",
+            format!("report the working directory as {}", short(&joined(1))),
+        ),
         "8" => meaning("", hyperlink(fields)),
         "9" if rest(1) == "4" => meaning("", "report progress to the taskbar (ConEmu's OSC 9;4)"),
-        "9" => meaning("", format!("raise a notification saying {}", short(&joined(1)))),
+        "9" => meaning(
+            "",
+            format!("raise a notification saying {}", short(&joined(1))),
+        ),
         "10" => meaning("", color_slot("foreground", rest(1))),
         "11" => meaning("", color_slot("background", rest(1))),
         "12" => meaning("", color_slot("cursor", rest(1))),
         "17" => meaning("", color_slot("selection background", rest(1))),
-        "22" => meaning("", format!("set the mouse pointer shape to {}", short(&joined(1)))),
+        "22" => meaning(
+            "",
+            format!("set the mouse pointer shape to {}", short(&joined(1))),
+        ),
         "52" => meaning("", clipboard(fields)),
-        "66" => meaning("", "draw text at a multiple of the cell size (kitty text sizing)"),
+        "66" => meaning(
+            "",
+            "draw text at a multiple of the cell size (kitty text sizing)",
+        ),
         "99" => meaning("", "raise a notification (kitty's protocol)"),
         "104" => meaning(
             "",
@@ -737,7 +932,11 @@ fn hyperlink(fields: &[&str]) -> String {
     if params.is_empty() {
         format!("start a hyperlink to {}", short(&uri))
     } else {
-        format!("start a hyperlink to {} with parameters {}", short(&uri), short(params))
+        format!(
+            "start a hyperlink to {} with parameters {}",
+            short(&uri),
+            short(params)
+        )
     }
 }
 
@@ -776,10 +975,7 @@ fn clipboard(fields: &[&str]) -> String {
     };
     match fields.get(2).copied() {
         Some("?") => format!("read {selection} — a sequence that can exfiltrate data"),
-        Some(data) => format!(
-            "put {} of base64 onto {selection}",
-            count_bytes(data.len())
-        ),
+        Some(data) => format!("put {} of base64 onto {selection}", count_bytes(data.len())),
         None => format!("a clipboard command for {selection} with no payload"),
     }
 }
@@ -810,7 +1006,10 @@ pub fn dcs(fields: &Fields, payload: &str) -> Option<Meaning> {
         ([], b'q') => meaning("", "sixel image data"),
         ([b'$'], b'q') => meaning(
             "DECRQSS",
-            format!("ask the terminal to report its current setting for {}", short(payload)),
+            format!(
+                "ask the terminal to report its current setting for {}",
+                short(payload)
+            ),
         ),
         ([b'$'], b'r') => meaning(
             "DECRPSS",
@@ -846,7 +1045,10 @@ fn xtgettcap(payload: &str) -> String {
     if names.is_empty() {
         return "ask for terminfo capabilities".to_owned();
     }
-    format!("ask the terminal for the terminfo capabilities {}", names.join(", "))
+    format!(
+        "ask the terminal for the terminfo capabilities {}",
+        names.join(", ")
+    )
 }
 
 /// Decodes an even-length run of hex digits into text.
@@ -898,8 +1100,8 @@ fn count_bytes(len: usize) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
     use super::super::parse::{Item, Outcome, parse_item};
+    use super::*;
 
     /// The `Fields` of a `CSI`, for driving the tables.
     fn fields(bytes: &[u8]) -> Fields {
@@ -937,14 +1139,23 @@ mod tests {
     fn cursor_movement_counts_correctly() {
         assert_eq!(summary(b"\x1b[A"), "move the cursor up 1 row");
         assert_eq!(summary(b"\x1b[3A"), "move the cursor up 3 rows");
-        assert_eq!(summary(b"\x1b[10;20H"), "move the cursor to row 10, column 20");
+        assert_eq!(
+            summary(b"\x1b[10;20H"),
+            "move the cursor to row 10, column 20"
+        );
         assert_eq!(summary(b"\x1b[H"), "move the cursor to row 1, column 1");
     }
 
     #[test]
     fn erasing_distinguishes_its_three_directions() {
-        assert_eq!(summary(b"\x1b[J"), "erase from the cursor to the end of the screen");
-        assert_eq!(summary(b"\x1b[1J"), "erase from the start of the screen to the cursor");
+        assert_eq!(
+            summary(b"\x1b[J"),
+            "erase from the cursor to the end of the screen"
+        );
+        assert_eq!(
+            summary(b"\x1b[1J"),
+            "erase from the start of the screen to the cursor"
+        );
         assert_eq!(summary(b"\x1b[2J"), "erase the whole screen");
         assert_eq!(summary(b"\x1b[3J"), "erase the scrollback");
     }
@@ -987,8 +1198,14 @@ mod tests {
 
     #[test]
     fn window_operations_include_the_size_queries() {
-        assert_eq!(summary(b"\x1b[18t"), "ask how big the text area is in characters");
-        assert_eq!(summary(b"\x1b[16t"), "ask how big one character cell is in pixels");
+        assert_eq!(
+            summary(b"\x1b[18t"),
+            "ask how big the text area is in characters"
+        );
+        assert_eq!(
+            summary(b"\x1b[16t"),
+            "ask how big one character cell is in pixels"
+        );
         assert_eq!(mnemonic(b"\x1b[18t"), "XTWINOPS");
     }
 
@@ -1054,7 +1271,10 @@ mod tests {
     fn charset_designation_names_both_the_slot_and_the_set() {
         let graphics = escape_sequence(b"(", b'0').unwrap();
         assert_eq!(graphics.mnemonic, "SCS");
-        assert!(graphics.summary.contains("line-drawing set"), "{graphics:?}");
+        assert!(
+            graphics.summary.contains("line-drawing set"),
+            "{graphics:?}"
+        );
         assert!(graphics.summary.contains("G0"), "{graphics:?}");
         let ascii = escape_sequence(b"(", b'B').unwrap();
         assert!(ascii.summary.contains("US ASCII"), "{ascii:?}");
@@ -1065,13 +1285,19 @@ mod tests {
     #[test]
     fn osc_titles_hyperlinks_and_the_empty_hyperlink() {
         let title = osc(&["0", "my window"]).unwrap();
-        assert_eq!(title.summary, "set the window title and icon name to \"my window\"");
+        assert_eq!(
+            title.summary,
+            "set the window title and icon name to \"my window\""
+        );
         let open = osc(&["8", "", "https://example.com"]).unwrap();
         assert_eq!(open.summary, "start a hyperlink to \"https://example.com\"");
         let close = osc(&["8", "", ""]).unwrap();
         assert_eq!(close.summary, "end the current hyperlink");
         let with_id = osc(&["8", "id=42", "https://example.com"]).unwrap();
-        assert!(with_id.summary.contains("parameters \"id=42\""), "{with_id:?}");
+        assert!(
+            with_id.summary.contains("parameters \"id=42\""),
+            "{with_id:?}"
+        );
     }
 
     #[test]
@@ -1082,7 +1308,12 @@ mod tests {
 
     #[test]
     fn osc_nine_is_disambiguated_by_its_second_field() {
-        assert!(osc(&["9", "4", "1", "42"]).unwrap().summary.contains("progress"));
+        assert!(
+            osc(&["9", "4", "1", "42"])
+                .unwrap()
+                .summary
+                .contains("progress")
+        );
         assert!(
             osc(&["9", "build finished"])
                 .unwrap()
@@ -1101,8 +1332,18 @@ mod tests {
             osc(&["10", "rgb:ff/ff/ff"]).unwrap().summary,
             "set the foreground colour to \"rgb:ff/ff/ff\""
         );
-        assert!(osc(&["4", "1", "?"]).unwrap().summary.starts_with("ask what palette entry"));
-        assert!(osc(&["104"]).unwrap().summary.contains("every palette entry"));
+        assert!(
+            osc(&["4", "1", "?"])
+                .unwrap()
+                .summary
+                .starts_with("ask what palette entry")
+        );
+        assert!(
+            osc(&["104"])
+                .unwrap()
+                .summary
+                .contains("every palette entry")
+        );
     }
 
     #[test]
@@ -1120,7 +1361,10 @@ mod tests {
 
     #[test]
     fn dcs_names_sixel_decrqss_and_the_tmux_wrapper() {
-        assert_eq!(dcs(&fields(b"\x1bP0;1;0q\x1b\\"), "").unwrap().summary, "sixel image data");
+        assert_eq!(
+            dcs(&fields(b"\x1bP0;1;0q\x1b\\"), "").unwrap().summary,
+            "sixel image data"
+        );
         let decrqss = dcs(&fields(b"\x1bP$qm\x1b\\"), "m").unwrap();
         assert_eq!(decrqss.mnemonic, "DECRQSS");
         assert!(decrqss.summary.contains("\"m\""), "{decrqss:?}");

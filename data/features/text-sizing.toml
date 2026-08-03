@@ -1,11 +1,465 @@
-# PLACEHOLDER — being written. See glyph-protocol.toml for the full schema.
+# The kitty text sizing protocol — `OSC 66 ; <metadata> ; <text> ST`.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslash
+#     sequences survive verbatim.
+#   * Write sequences symbolically: ESC, CSI, OSC, ST, BEL — never embed a real
+#     0x1b byte in this file. `escapade` prints these as text, and a literal
+#     control byte here would be executed by the reader's terminal instead.
+#   * One source line per paragraph. termimad re-wraps each source line on its
+#     own, so a hard-wrapped paragraph wraps twice and comes out ragged.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+#
+# This protocol is young — kitty 0.40.0, March 2025 — and the matrix at the
+# bottom is mostly `no` and `unknown` as a result. That is the honest state of
+# it, not a gap in this file: please do not upgrade an `unknown` here without
+# actually running the terminal.
 
 id = "text-sizing"
 name = "Text sizing"
 tagline = "Draw text several cells tall that still selects and copies as the one line it really is."
 status = "experimental"
+author = "Kovid Goyal, for kitty"
+introduced = "2025-03"
 transport = "OSC"
+spec_url = "https://sw.kovidgoyal.net/kitty/text-sizing-protocol/"
 
 summary = '''
-Placeholder. This feature file is being written.
+A terminal is a grid of identically sized cells, and for forty years that has meant one text size per screen. Everything that looks like a heading in a terminal — a banner, a build result, a big red FAILED — is either drawn out of block characters or it is not big at all.
+
+This protocol lifts the restriction without leaving the grid. The application says how many cells a run of text should occupy, and the terminal picks a font size to fill them:
+
+```
+OSC 66 ; s=4 ; BUILD PASSED ST
+```
+
+Twelve characters, four cells tall, in the real font, at the real weight, hinted and antialiased like every other glyph on screen. And — this is the part that makes it a text protocol rather than a drawing one — **it is still the string `BUILD PASSED`**. Select it with the mouse and twelve characters land on your clipboard. Search the scrollback for `PASSED` and it is found. Pipe the pane to a file and the file says `BUILD PASSED`. Art made of box-drawing glyphs copies as the picture it is made of.
+
+The metadata is a **colon**-separated list of `key=value` pairs — six keys, all small integers:
+
+```
+s   1..7    overall scale; the block is s*w by s cells
+w   0..7    width in cells; 0 (the default) means "count it as usual"
+n   0..15   numerator of a fractional scale, applied on top of s
+d   0..15   denominator; must be greater than n
+v   0..2    vertical alignment inside the block: 0 top, 1 bottom, 2 centre
+h   0..2    horizontal alignment: 0 left, 1 right, 2 centre
+```
+
+Two of those keys do something the headline does not suggest. **`w` is not about big text at all** — it lets an application state how many cells a string occupies, which ends the oldest disagreement in terminal rendering. And **`n`/`d` shrink the font without shrinking the cells**, which is how you get a superscript, a subscript or a caption that still sits on the grid.
 '''
+
+problem = '''
+There are four existing ways to put big text in a terminal, and each of them gives something up.
+
+**ASCII art.** `figlet`, `toilet`, block-drawing banners, the ▄▀ half-block trick. It works everywhere, needs no protocol, and produces a *picture of text*. Copy it and you get the picture. Search for it and you find nothing. Read it with a screen reader and you get a wall of box characters. Change the font and the alignment falls apart. It is also, for anything but ASCII, a font problem in its own right.
+
+**An image.** The kitty graphics protocol or Sixel will render text at any size you like, beautifully, and then you have an image: it does not reflow, it does not select, it does not copy, it does not follow the colour scheme, and it has to be regenerated whenever the cell size changes. For a chart that is the right trade. For the word `PASSED` it is an enormous amount of machinery to lose the ability to copy a word.
+
+**DEC double-width and double-height lines.** The genuine precedent, and it is from the VT100: `ESC # 6` makes the current line double-width, `ESC # 3` and `ESC # 4` draw the top and bottom halves of a double-height line. Real text, real font, real selection. But it is *line*-scoped rather than run-scoped, so the whole line grows; it is exactly 2×, with no other option; and a double-height line has to be printed **twice**, once for each half, which every tool that consumes terminal output then sees as a duplicated line. Support is also patchy in a way that surprises people, nearly fifty years on.
+
+**Change the terminal's font size.** Global, user-driven, unscriptable, and it changes everything on screen including the thing you were trying to contrast against.
+
+The fifth thing this replaces is not about size at all. **`w=` ends the width argument.** When an application and a terminal disagree about how many cells a string takes — a ZWJ emoji, an ambiguous-width CJK character, a Nerd Font glyph — every column the application computed afterwards is wrong, and no redraw fixes it because the *model* is wrong. Mode 2027 answers this by making both sides run the same segmentation algorithm. `w=` answers it by removing the negotiation: the application states the width and the terminal complies. kitty took the second route deliberately, which is why portable code that cares about layout has to know about both.
+'''
+
+how_it_works = '''
+One OSC command, with the text inside it:
+
+```
+OSC 66 ; <metadata> ; <text> ST
+```
+
+`OSC` is `ESC ]` and `ST` is the string terminator `ESC \`; `BEL` is accepted in its place, and the specification's own examples use it. `escapade` sends `ST`, because a stray `BEL` on a terminal that does not know `OSC 66` rings the bell.
+
+The metadata field is the six keys, colon-separated, in any order and all optional: `s=3:w=2:v=2`. **Colon, never comma** — the comma that separates parameters in the kitty *graphics* protocol is a parse error here, and it is the mistake anyone who has used both makes first.
+
+## The block
+
+With `w` set, the sequence draws into a block of exactly **`s * w` by `s` cells**, and every character in that one escape code has to fit inside it. That is the whole geometry. The cursor afterwards is `s * w` cells to the right, **on the same row it started on**, even though the block extends `s - 1` rows downwards — so an application drawing several scaled runs is responsible for the vertical layout itself.
+
+With `w` absent (or `w=0`, which means the same thing), the terminal counts the text the way it normally would and multiplies by `s`. That is convenient and it is exactly the case where the terminal and the application can still disagree, which is what `w` exists to prevent.
+
+Three rules follow from the block, and all three are the terminal's obligation rather than the application's:
+
+* **It wraps as a unit.** With DECAWM set, a block whose width does not fit on the current line moves to the start of the next line and is drawn there — it is never split down the middle.
+* **It is discarded if it cannot fit at all.** A block larger than the screen in either dimension *must* be thrown away. Which means measuring one two rows tall on the last line of the screen reports a false negative unless you make room first; `escapade textsize probe` scrolls to reserve the rows before it measures.
+* **Overwriting has precedence rules.** Writing to the block's top-left cell erases the whole block. Writing elsewhere in its top row replaces it with spaces. Writing to a lower row skips those cells. A redraw loop that assumes cells are independent will punch holes in scaled text.
+
+## Fractional scaling is not smaller cells
+
+`n` and `d` apply *on top of* `s`, and — this is the part that surprises everyone — they do **not** change how many cells the text occupies. They shrink the rendered font *inside* those cells. `n=1:d=2` is half-height text in a full-height cell, and `v`/`h` decide where in the cell it sits. That is what makes a superscript possible without breaking the grid, and it is why alignment does nothing at all unless a fraction is present: with no fraction the render area fills the block, and there is nothing left to move.
+
+The specification requires `d > n`. A fraction here says how much *smaller* than the base size to draw; making something bigger is what `s` is for.
+
+## There is no query
+
+Not "there is no good query" — there is none at all. The protocol only ever *tells* the terminal a size; nothing anywhere in it asks one, and there is no reply to parse. Its own documented support detection is a measurement:
+
+```
+→  CR CSI K                   column 1, on a line we are about to own
+→  CSI 6 n
+←  CSI <row> ; <col> R        where we started
+→  OSC 66 ; w=2 ; <space> ST  a space, in two cells
+→  CSI 6 n
+←  CSI <row> ; <col> R        the difference is what the terminal did
+→  OSC 66 ; s=2 ; <space> ST  and again, for the scale key
+→  CSI 6 n
+←  CSI <row> ; <col> R
+```
+
+A space is used rather than a letter so the measurement is of the block and not of a glyph the font might have opinions about. And measuring gives **three** outcomes per key where a query would have given two:
+
+| cells | what it means |
+|-------|---------------|
+| 2 | the key was honoured |
+| 1 | the text was drawn, the key ignored |
+| 0 | the whole OSC string was discarded — **the text is lost** |
+
+That last row is the reason this feature measures before it draws. See **Things that will bite you**.
+
+## Support is per key, not per terminal
+
+`w=` needs no new rendering — it is bookkeeping about cell counts. `s=` needs a font renderer that can draw at arbitrary sizes and composite one glyph across several cells. They are separable, and terminals have separated them, so a single boolean would misreport an implementation that has the half most applications need for correctness while lacking the half they want for banners. `escapade textsize probe --format json` reports a verdict per key; the bare exit status requires all of them, because the question `if escapade textsize probe; then banner; fi` is really asking about `s`.
+
+`n`, `d`, `v` and `h` **cannot be measured at all**, and that is not a gap in the probe — fractional scaling explicitly does not change the cell count, and alignment moves things around inside a block whose size never changed. Nothing about either is visible to a Cursor Position Report. A terminal could honour `w` and `s` and silently ignore the other four, and no measurement anywhere could tell.
+'''
+
+payload = '''
+The text is the payload, and the specification asks for three things of it: **escape-code-safe UTF-8**, no more than **4096 bytes**, and — when `w` is set — short enough that all of it renders inside `s * w` cells. Longer strings are split across several escape codes, and the intended shape of a scaled paragraph is one `OSC 66` per chunk that fits.
+
+## Escape-code-safe means every control byte
+
+The payload sits **inside** an OSC string, which is a stricter place than it looks. `ESC` starts the string terminator. `BEL` *is* a terminator. And ECMA-48 leaves the effect of any other C0 control inside a string undefined, which in practice means "ends it, on some terminals". So there is no such thing as a harmless newline in this payload.
+
+That makes this the opposite case from `clipboard`, where base64's alphabet contains no `ESC` and the encoding *is* the sanitizer. Here the payload is human-readable text by design, so it has to be sanitised by hand, and the choice of what to replace a control byte *with* matters:
+
+```
+OSC 66 ; s=2 ; safe␛\␛[2J␛]0;pwned␇ ST
+```
+
+`escapade` replaces every control character with its glyph from the Unicode **Control Pictures** block — `ESC` becomes U+241B, `BEL` becomes U+2407, a newline becomes U+240A — and the eight-bit C1 controls, which include the single-byte spellings of `CSI` and `OSC`, become U+FFFD. Percent-encoding would be the right answer for a URI and is the wrong answer here: this text exists in order to be *read*, by someone who asked for it four cells tall. A visible U+241B shows that something was in the input and disarms it in the same stroke.
+
+The length check comes **after** sanitising, because each replaced control byte grows from one byte to three: a payload that fits before sanitising can fail afterwards.
+
+## What is not a problem
+
+A semicolon in the text is safe, and so is a colon. The payload is everything after the *second* semicolon, so no character inside it can be mistaken for a delimiter — unlike a hyperlink URI, where the delimiter and the data share an alphabet. `OSC 66 ; s=2 ; a;b:c ST` draws `a;b:c`.
+
+Empty text is refused rather than sent. kitty ignores an `OSC 66` whose payload is empty, so it would draw nothing at all rather than a blank block, and a caller who wanted blank cells wanted spaces.
+'''
+
+security = '''
+The trust model rests on one property, and it is the same one that makes the protocol worth having:
+
+**The cell buffer stays authoritative.** Selection, copy, search and scrollback all return the characters the application sent, never the picture the terminal drew. There is no way to use this protocol to build a *what you see is not what you copy* trap, because there is no second string anywhere in the sequence — the thing on screen and the thing on your clipboard are the same bytes, rendered at different sizes.
+
+Scaling also grants no new reach. An application that can draw `PASSED` seven cells tall could already print `PASSED`; making it larger is a presentation choice, not a capability, and it is confined to the block the sequence asked for.
+
+## Where the care is actually needed
+
+**The payload is untrusted text inside an OSC string.** That is a real injection surface and it is entirely the sender's problem: one raw `ESC` in the text ends the string early, and everything after it is read as a fresh command by the terminal. A build script that pipes a branch name, a filename or a log line into `OSC 66` without sanitising has handed the author of that string a terminal. The payload rules under **The payload** above are not stylistic; they are the whole defence, and there is no encoding here doing the job for you.
+
+**A terminal that does not implement this loses the text.** An unrecognised OSC string is parsed to its terminator and discarded, payload included — so on a terminal without support, `OSC 66 ; s=4 ; BUILD PASSED ST` prints *nothing*. Not smaller text, not unsized text: nothing. That is an availability failure rather than a security one, but it fails silently and in the direction that hides information, which is the worst way for a status message to fail.
+
+## What escapade does about it
+
+* Sanitising happens in exactly one place — the constructor of the sequence — so a sequence that exists is safe to write, whatever the text came from. The check is not optional and cannot be bypassed by a flag.
+* Text that changed on the way through is reported on stderr, because the string on screen will not be the string that was passed in and staying quiet about that would be worse than either.
+* `escapade textsize` **measures before it draws** when there is a terminal on both ends, and prints the text plainly if the measurement shows the string being thrown away. One round trip of a few milliseconds turns silence into output.
+* When output is redirected to a file or a pipe, the sequence is written as-is and nothing is measured: there is nothing to ask, and the bytes are data whose consumer decides what to do with them.
+'''
+
+caveats = '''
+**On a terminal without support, your text disappears.** This is the one to internalise. The sequence has no fallback text in it — there is nowhere to put any — so an unrecognised `OSC 66` takes the payload with it. Detect first, or print something else. A status line that is empty on half the terminals in the world is worse than one that was never scaled.
+
+**There is no query, so detection costs a round trip.** Measure once at startup with the specification's own procedure and cache the answer for the session. Do not measure per banner.
+
+**Measure with room below.** A block taller than the space left on screen must be discarded by the terminal, so a `s=2` measurement taken on the last line reports "not supported" for a terminal that supports it perfectly. Reserve the rows first.
+
+**Support is per key.** `w` without `s` is a real and reasonable implementation state — the correctness half without the rendering half. Ask about the key you are about to use.
+
+**Alignment does nothing without a fraction.** `v` and `h` position the fractionally scaled render area inside the block. With no `n`/`d` the render area *is* the block, and the keys are legal, accepted and inert.
+
+**Centre is `2`, not the middle value.** The wire order is top, bottom, centre and left, right, centre. Reading a top/centre/bottom enum straight onto the wire silently swaps two of the three.
+
+**Out-of-range values are clamped, not refused.** kitty clamps, so `s=9` renders as `s=7` with nothing anywhere to say the request was changed. `escapade` refuses out-of-range values at the command line rather than passing on a number the terminal will quietly rewrite.
+
+**The cursor does not end up where the block does.** It advances `s * w` cells on the *starting* row. Everything below the first row of a scaled block is territory the application has to manage itself.
+
+**Overwriting a multicell block is not cell-by-cell.** Touching the top-left cell erases the entire block; touching the rest of the top row blanks it to spaces. Partial-redraw logic written against ordinary cells will leave holes.
+
+**Multiplexers own the grid.** Inside tmux or Zellij, the multiplexer lays out the cells of a pane, and a pane's cell accounting has no concept of a character that is four cells tall. Forwarding `OSC 66` past the multiplexer would be worse than dropping it — the multiplexer would believe a cell holds one character while the terminal drew a block over sixteen of them. Probe from where you are, and treat the multiplexer's answer as the operative one.
+
+**It is not a replacement for knowing your widths.** `w` fixes the disagreement for the text you send through `OSC 66`. Everything else on the line is still counted by whatever rule the terminal uses, so an application that mixes sized and unsized text on one row needs both answers.
+
+**The protocol is young.** kitty 0.40.0 is March 2025, and the support table above is mostly empty for that reason. Treat support as something to measure at runtime, never as something to require.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+name = "Sized text"
+purpose = "Draw a run of text at a size other than the terminal's own."
+request = "OSC 66 ; <metadata> ; <text> ST"
+notes = '''The whole protocol. `<metadata>` is the six keys, colon-separated and all optional, so `OSC 66 ; ; hello ST` is legal and simply prints `hello`. There is no reply and no acknowledgement — and, unlike most write-only sequences, no safe failure either: a terminal that does not implement it discards the string *and the text inside it*.'''
+
+[[sequence]]
+name = "Width detection"
+purpose = "Find out whether the terminal honours `w`, by asking it to put a space in two cells."
+request = "OSC 66 ; w=2 ; <space> ST"
+notes = '''The specification's own probe for the width half. Take a Cursor Position Report before and after: two cells means honoured, one means the text was drawn and the key ignored, zero means the whole string was thrown away. A space rather than a letter, so the measurement is of the block and not of a glyph the font might render at some other width.'''
+
+[[sequence]]
+name = "Scale detection"
+purpose = "Find out whether the terminal honours `s`, by asking it to put a space in a two-by-two block."
+request = "OSC 66 ; s=2 ; <space> ST"
+notes = '''The same measurement for the scale half, and the one that needs room: this block is two rows tall, and a terminal *must* discard a block that does not fit on screen. Measured on the last line of the terminal it reports a false negative, so reserve the row first.'''
+
+[[sequence]]
+name = "Cursor Position Report — the measurement"
+purpose = "Ask the terminal how many cells it actually used, since there is nothing to ask about support directly."
+request = "CSI 6 n"
+reply = "CSI <row> ; <col> R"
+notes = '''The only detection this protocol has. It works on terminals that have never heard of `OSC 66`, it answers the question an application really has — where is the cursor now — and it is the same primitive `escapade grapheme probe` uses to settle width disagreements. Take a reading, send the sequence, take another, subtract, and remember to account for a wrap.'''
+
+[[sequence]]
+name = "Primary Device Attributes — the barrier"
+purpose = "Tell a terminal that ignores Cursor Position Reports apart from nothing listening at all."
+request = "CSI c"
+reply = "CSI ? 62 ; 4 c"
+notes = '''Diagnostic only here, and deliberately so: every negative in this feature comes from a *measurement*, which is stronger evidence than a barrier could ever be — the terminal said where the cursor ended up. What the barrier buys is the difference between "unknown" and "unknown, and here is why". Inside a multiplexer it is answered by the multiplexer, which costs nothing because it was never load-bearing.'''
+
+# ---------------------------------------------------------------------------
+# Parameters.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "s"
+applies_to = "the metadata field"
+default = "1"
+description = "Overall scale, 1 to 7. The text is drawn in a block of `s * w` by `s` cells, so `s=4` is four cells tall. Out of range is clamped rather than refused, which means `s=9` renders as `s=7` with nothing to say the request was changed."
+
+[[param]]
+key = "w"
+applies_to = "the metadata field"
+default = "0"
+description = "Width in cells, 0 to 7. `0` means the terminal counts the text as it normally would; any other value is the application *stating* the width, which is what removes the wcwidth disagreement. All the text in one escape code must fit in `s * w` cells — split it across several if it does not."
+
+[[param]]
+key = "n"
+applies_to = "the metadata field"
+default = "0"
+description = "Numerator of a fractional scale, 0 to 15, applied on top of `s`. Fractional scaling shrinks the font inside the cells without changing how many cells are used, which is how superscripts and subscripts stay on the grid."
+
+[[param]]
+key = "d"
+applies_to = "the metadata field"
+default = "0"
+description = "Denominator of the fractional scale, 0 to 15, and it **must be greater than `n`**: a fraction here says how much smaller than the base size to draw. `0` switches fractional scaling off rather than scaling by anything."
+
+[[param]]
+key = "v"
+applies_to = "the metadata field"
+default = "0"
+description = "Where the fractionally scaled render area sits vertically inside the block: `0` top, `1` bottom, `2` centre. Note that centre is the *last* value, not the middle one. Inert unless `n < d`."
+
+[[param]]
+key = "h"
+applies_to = "the metadata field"
+default = "0"
+description = "Where the fractionally scaled render area sits horizontally: `0` left, `1` right, `2` centre. Same ordering trap as `v`, and inert for the same reason."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "kitty"
+kind = "terminal"
+url = "https://sw.kovidgoyal.net/kitty/text-sizing-protocol/"
+notes = "Author and reference implementation. Its own changelog puts it plainly: kitty is the first major terminal to introduce the concept of multiple sized text."
+
+[[user]]
+name = "foot"
+kind = "terminal, the width half only"
+url = "https://codeberg.org/dnkl/foot"
+notes = "Implements `w` and logs the other keys as unsupported. Worth listing as a user rather than only as a matrix row, because it is the concrete proof that the two halves of this protocol are separable — and the spec blesses that tier explicitly."
+
+[[user]]
+name = "escapade"
+kind = "application"
+url = "https://github.com/fornwall/escapade"
+notes = "`escapade textsize --scale 4 'BUILD PASSED'` draws it, and measures first so the text is printed plainly rather than lost on a terminal that would discard the string."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# Two terminals ship it: kitty in full, foot for the `w` key. Everything else in
+# this table is a `no` backed by an OSC dispatch table that has no 66 in it, or
+# an honest `unknown`. This is what a one-year-old protocol looks like.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+since = "0.40.0 (2025-03-08)"
+notes = "Author and reference implementation: all six keys, the block geometry, the wrapping and discard rules, and the overwrite precedence. Its changelog claims the first: \"kitty is the first major terminal to introduce the concept of multiple sized text.\" 0.46.0 later fixed alignment and cropping of fractionally scaled text, so a build older than that is worth re-checking before blaming your own metadata."
+source = "https://sw.kovidgoyal.net/kitty/changelog/"
+
+[[support]]
+terminal = "foot"
+status = "partial"
+since = "1.21.0 (2025-03-17)"
+notes = "**The `w` key only** — nine days after kitty shipped the protocol, which tells you which half foot wanted. Its own changelog says so: \"Support for kitty's text-sizing protocol (`w`, width, only), OSC-66.\" In the source, `s`, `n`, `d` and `v` reach a `LOG_WARN` reading \"OSC-66: unsupported: '%c' parameter, ignoring\", and `h` is not in the switch at all. The text still renders — just unscaled — so foot is the case that makes a single support boolean wrong: it has the half that fixes width disagreements and not the half that draws banners."
+source = "https://codeberg.org/dnkl/foot/raw/branch/master/CHANGELOG.md"
+
+[[support]]
+terminal = "contour"
+status = "partial"
+since = "master, merged 2026-07; targets 0.7.0"
+notes = "**Not in any released version.** `src/vtbackend/TextSizing.h` exists in master and decodes all six keys, but the newest stable release, 0.6.3.8249 of 2026-04-09, predates the merge — so a Contour you can install today does not have this. Filed as partial rather than yes for that reason alone, and worth revisiting the day 0.7.0 ships."
+source = "https://github.com/contour-terminal/contour/pull/2004"
+
+[[support]]
+terminal = "ghostty"
+status = "no"
+since = "parser only, 1.3.0 (2026-03-09)"
+notes = "Parsed but not drawn, and the release notes say it in one line: \"vt: Parse Kitty text sizing protocol (OSC 66), not implemented in the GUI yet.\" The tracking issue is still open, and it scopes the first pass to the width key, \"following the approach taken by the Foot terminal\". Filed as no because that is what it means for an application: what happens to the payload of a parsed-but-unimplemented OSC 66 was not verified here, and a sequence that parses without rendering is a sequence whose text you have lost."
+source = "https://ghostty.org/docs/install/release-notes/1-3-0"
+
+[[support]]
+terminal = "wezterm"
+status = "no"
+notes = "No OSC 66 in `wezterm-escape-parser/src/osc.rs`. Two open feature requests, neither answered by a maintainer — which is a request, not an implementation."
+source = "https://github.com/wezterm/wezterm/issues/7061"
+
+[[support]]
+terminal = "rio"
+status = "no"
+notes = "An open issue, and a maintainer who wants to go a different way: \"I actually would prefer to Rio have its own version of it.\" Nothing implemented either way."
+source = "https://github.com/raphamorim/rio/issues/1007"
+
+[[support]]
+terminal = "alacritty"
+status = "no"
+notes = "Declined rather than overlooked. The request was closed within minutes with \"If you want a GUI, you should be using a GUI toolkit\", which is a coherent position for a terminal whose whole thesis is doing less. No OSC 66 in `term/mod.rs`."
+source = "https://github.com/alacritty/alacritty/issues/8910"
+
+[[support]]
+terminal = "windows-terminal"
+status = "no"
+notes = "Its `OscActionCodes` enum is the complete list of OSC numbers it dispatches — 0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 17, 21, 52, 104, 110, 111, 112, 117, 133, 633, 777, 1337, 9001 — and 66 is not among them. (The repository's apparent \"OSC 66\" hit is OSC 663, VS Code's prompt markup.)"
+source = "https://github.com/microsoft/terminal/blob/main/src/terminal/parser/OutputStateMachineEngine.hpp"
+
+[[support]]
+terminal = "vscode"
+status = "no"
+notes = "No OSC 66 handler in xterm.js's `InputHandler.ts`, and a maintainer on the record in December 2025: \"I have seen the graphics protocol mentioned before but not the text sizing one.\""
+source = "https://github.com/microsoft/vscode/issues/236991"
+
+[[support]]
+terminal = "konsole"
+status = "no"
+notes = "Konsole's `enum osc` lists 4, 9, 12, 22, 52, 99, 104, 112, 133, 777 and 1337. No 66, and no feature request found on bugs.kde.org."
+source = "https://invent.kde.org/utilities/konsole/-/blob/master/src/Vt102Emulation.h"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "no"
+notes = "VTE's `_VTE_OSC()` dispatch table has no entry for 66, which covers GNOME Terminal and everything else built on VTE. Worth a warning for anyone grepping: VTE uses **OSC 666** for its own termprops, and it is easy to read that as a hit."
+source = "https://gitlab.gnome.org/GNOME/vte/-/blob/master/src/parser-osc.hh"
+
+[[support]]
+terminal = "xterm"
+status = "no"
+notes = "Nothing in `ctlseqs` for OSC 66, and nothing in the changelog about text sizing. The apparent matches are DEC private mode 66, DECNKM, which is the numeric keypad and unrelated. xterm's own answer to this problem is forty-five years older: DECDWL and DECDHL, `ESC # 6` and `ESC # 3` / `ESC # 4`."
+source = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.txt"
+
+[[support]]
+terminal = "mintty"
+status = "no"
+notes = "Checked properly, because it was the plausible dark horse — mintty implements a great deal of this sort of thing. Its Changelog, its `CtrlSeqs.md` and `termout.c` all have nothing for OSC 66 through 3.8.3 of 2026-06-09; its `66` is DECNKM again. It does have SGR 73/74/75 for superscript and subscript, which is adjacent to what `n`/`d` do and is not the same protocol."
+source = "https://github.com/mintty/mintty/blob/master/wiki/Changelog.md"
+
+[[support]]
+terminal = "st"
+status = "no"
+notes = "`strhandle()` handles OSC 0, 1, 2, 4, 10, 11, 12, 52, 104, 110, 111 and 112. Third-party patches were not audited, as ever with st."
+source = "https://git.suckless.org/st/file/st.c.html"
+
+[[support]]
+terminal = "wayst"
+status = "no"
+notes = "Read from the README's feature list rather than from the source: it names the kitty graphics protocol and Sixel and says nothing about text sizing, and the project has been dormant. Weaker evidence than the rows above; correct it if you know better."
+source = "https://github.com/91861/wayst/blob/master/README.md"
+
+[[support]]
+terminal = "conemu"
+status = "no"
+notes = "Its last release is from 2023-07-24, about twenty months before this protocol existed. A release that predates a specification cannot implement it, which is the one kind of `no` that needs no source reading."
+source = "https://github.com/Maximus5/ConEmu/releases"
+
+[[support]]
+terminal = "iterm2"
+status = "no"
+notes = "Not in its escape-code documentation and not in any 3.7.0 beta changelog through 2026-07-26, and no feature request was found. This row is from documentation rather than from source, so it is the weakest `no` in the table."
+source = "https://iterm2.com/documentation-escape-codes.html"
+
+[[support]]
+terminal = "tmux"
+status = "no"
+notes = "Declined, on the record, the day it was asked: \"There is very little chance we will support this in the near future, sorry.\" **Passthrough does not rescue this one.** Wrapping `OSC 66` in tmux's `DCS tmux;` form would hand the sequence to the outer terminal while tmux went on believing the cell held one ordinary character — two programs laying out the same grid from different premises, which corrupts the pane rather than fixing it. Inside tmux, text sent through this protocol is simply lost."
+source = "https://github.com/tmux/tmux/issues/4461"
+
+[[support]]
+terminal = "screen"
+status = "no"
+notes = "No OSC 66 handling in `src/ansi.c`, and the same structural objection as tmux: screen owns the cells inside a window."
+source = "https://git.savannah.gnu.org/cgit/screen.git/plain/src/ansi.c"
+
+[[support]]
+terminal = "zellij"
+status = "unknown"
+notes = "No implementation was found and there is no issue or discussion of OSC 66 anywhere in the project — but that is evidence about the issue tracker, not about the code, and the source was not read. The structural argument that applies to tmux applies here too, which is a reason to expect a `no` rather than a reason to write one."
+
+[[support]]
+terminal = "warp"
+status = "unknown"
+notes = "Not checked."
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "The text sizing protocol — the specification"
+url = "https://sw.kovidgoyal.net/kitty/text-sizing-protocol/"
+
+[[resource]]
+title = "kitty 0.40.0, where it arrived"
+url = "https://sw.kovidgoyal.net/kitty/changelog/"
+
+[[resource]]
+title = "foot's changelog — \"the `w`, width, only\", the entry that makes support per key"
+url = "https://codeberg.org/dnkl/foot/raw/branch/master/CHANGELOG.md"
+
+[[resource]]
+title = "Ghostty's tracking issue — parsed since 1.3.0, not yet drawn"
+url = "https://github.com/ghostty-org/ghostty/issues/10333"
+
+[[resource]]
+title = "Terminal Unicode Core — mode 2027, the other answer to the width disagreement"
+url = "https://github.com/contour-terminal/terminal-unicode-core"
+
+[[resource]]
+title = "DECDWL and DECDHL — double-width and double-height lines, the VT100's version of this"
+url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"

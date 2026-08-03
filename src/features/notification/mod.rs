@@ -180,11 +180,7 @@ fn explicit_protocol(requested: NotifyProtocol) -> Option<Protocol> {
 /// # Errors
 ///
 /// Propagates whatever the chosen action fails with.
-pub fn run(
-    catalog: &Catalog,
-    command: &NotificationCommand,
-    no_color: bool,
-) -> Result<ExitCode> {
+pub fn run(catalog: &Catalog, command: &NotificationCommand, no_color: bool) -> Result<ExitCode> {
     let theme = Theme::new(no_color);
     match &command.action {
         Some(NotificationAction::Explain { no_matrix }) => {

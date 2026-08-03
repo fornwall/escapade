@@ -57,9 +57,7 @@ use crate::{
     cli::ProbeFormat,
     features::{
         Support,
-        keys::{
-            FLAGS, Flags, event::escape_json, parse_query_reply, pop, push, query,
-        },
+        keys::{FLAGS, Flags, event::escape_json, parse_query_reply, pop, push, query},
     },
     input::{InputReader, Reply},
     term::{CSI, Multiplexer, Term, pretty},
@@ -166,13 +164,7 @@ impl ProbeOutcome {
 /// that the pop can never be separated from the push by a control-flow path.
 #[must_use]
 pub fn burst() -> String {
-    format!(
-        "{}{}{}{}{CSI}c",
-        query(),
-        push(Flags::ALL),
-        query(),
-        pop()
-    )
+    format!("{}{}{}{}{CSI}c", query(), push(Flags::ALL), query(), pop())
 }
 
 /// Runs the probe using an existing terminal and reader.
@@ -225,7 +217,13 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
             } else if outcome.effective.is_none() {
                 outcome.effective = Some(flags);
             }
-        } else if matches!(reply, Reply::Csi { final_byte: 'c', .. }) {
+        } else if matches!(
+            reply,
+            Reply::Csi {
+                final_byte: 'c',
+                ..
+            }
+        ) {
             // The barrier came back. Everything sent before it has already been
             // processed, so waiting longer would learn nothing.
             outcome.answered_barrier = true;
@@ -239,7 +237,13 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
     // Consuming it here is what keeps probing invisible.
     if !outcome.answered_barrier
         && let Ok(Some(reply)) = input.wait_for_reply(DRAIN_TIMEOUT, |reply| {
-            matches!(reply, Reply::Csi { final_byte: 'c', .. })
+            matches!(
+                reply,
+                Reply::Csi {
+                    final_byte: 'c',
+                    ..
+                }
+            )
         })
     {
         outcome.replies.push(reply);
@@ -415,7 +419,10 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome, support: Support) {
 
     if outcome.supported() {
         println!();
-        println!("  {}", theme.paint("flags this terminal honoured", Ink::Accent));
+        println!(
+            "  {}",
+            theme.paint("flags this terminal honoured", Ink::Accent)
+        );
         let honoured = outcome.honoured();
         for spec in FLAGS {
             let held = honoured.bits() & spec.bit != 0;
@@ -708,7 +715,10 @@ mod tests {
             ..started()
         };
         let line = json_line(&outcome, Support::Yes);
-        assert!(!line[..line.len() - 1].chars().any(char::is_control), "{line}");
+        assert!(
+            !line[..line.len() - 1].chars().any(char::is_control),
+            "{line}"
+        );
     }
 
     #[test]

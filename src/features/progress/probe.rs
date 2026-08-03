@@ -467,11 +467,9 @@ impl ProbeOutcome {
                     evidence.value,
                     evidence.implies.unwrap_or("nothing")
                 ),
-                None => {
-                    "nothing identified this terminal, and this protocol has no query to fall \
+                None => "nothing identified this terminal, and this protocol has no query to fall \
                      back on"
-                        .to_owned()
-                }
+                    .to_owned(),
             };
         };
         let name = self
@@ -578,7 +576,13 @@ pub fn probe(catalog: &Catalog, term: &mut Term, input: &mut InputReader) -> Res
         // silent by design.
         if !outcome.answered_barrier
             && let Ok(Some(reply)) = input.wait_for_reply(DRAIN_TIMEOUT, |reply| {
-                matches!(reply, Reply::Csi { final_byte: 'c', .. })
+                matches!(
+                    reply,
+                    Reply::Csi {
+                        final_byte: 'c',
+                        ..
+                    }
+                )
             })
         {
             outcome.replies.push(reply);
@@ -648,11 +652,7 @@ pub fn detect(catalog: &Catalog) -> Result<ProbeOutcome> {
 /// # Errors
 ///
 /// Fails if the terminal cannot be set up.
-pub fn report(
-    theme: &Theme,
-    catalog: &Catalog,
-    format: Option<ProbeFormat>,
-) -> Result<ExitCode> {
+pub fn report(theme: &Theme, catalog: &Catalog, format: Option<ProbeFormat>) -> Result<ExitCode> {
     let outcome = detect(catalog)?;
     let support = outcome.support();
 
@@ -782,7 +782,10 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
         "  {} {}  {}",
         theme.paint(symbol, ink),
         theme.paint(support.as_str(), ink),
-        theme.paint(&format!("(exit status {})", exit_status_number(support)), Ink::Muted)
+        theme.paint(
+            &format!("(exit status {})", exit_status_number(support)),
+            Ink::Muted
+        )
     );
     for line in wrap(&outcome.reason(), theme.width().saturating_sub(6)) {
         println!("      {}", theme.paint(&line, Ink::Muted));
@@ -825,12 +828,18 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
         // a question that was never asked.
         println!(
             "    {}",
-            theme.paint("nothing was asked — there is no terminal on both ends", Ink::Muted)
+            theme.paint(
+                "nothing was asked — there is no terminal on both ends",
+                Ink::Muted
+            )
         );
     }
     println!();
 
-    println!("  {}", theme.paint("what the environment says", Ink::Accent));
+    println!(
+        "  {}",
+        theme.paint("what the environment says", Ink::Accent)
+    );
     if outcome.evidence.is_empty() {
         println!(
             "    {}",
@@ -861,7 +870,11 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
         );
         if let Some(caveat) = item.caveat {
             for line in wrap(caveat, theme.width().saturating_sub(width + 12)) {
-                println!("    {}  {}", " ".repeat(width), theme.paint(&line, Ink::Muted));
+                println!(
+                    "    {}  {}",
+                    " ".repeat(width),
+                    theme.paint(&line, Ink::Muted)
+                );
             }
         }
     }
@@ -910,10 +923,7 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
     }
 
     println!();
-    println!(
-        "  {}",
-        theme.paint("what would be sent", Ink::Accent)
-    );
+    println!("  {}", theme.paint("what would be sent", Ink::Accent));
     println!(
         "    {}  {}",
         theme.paint(&pretty(&Report::set(Percent::FULL).sequence()), Ink::Code),
@@ -1133,7 +1143,10 @@ mod tests {
         // A date-stamped build is a single big number, which is honest: it cannot
         // be compared against a dotted version, and `required_version` will not
         // find one to compare it with.
-        assert_eq!(parse_version("WezTerm 20240203-110809"), Some(vec![20_240_203]));
+        assert_eq!(
+            parse_version("WezTerm 20240203-110809"),
+            Some(vec![20_240_203])
+        );
         assert_eq!(parse_version("no digits here"), None);
         assert_eq!(parse_version(""), None);
     }
@@ -1220,7 +1233,11 @@ mod tests {
     fn a_matrix_no_from_an_in_band_name_is_a_no() {
         let outcome = in_band("kitty(0.36.0)", Some(SupportStatus::No), None);
         assert_eq!(outcome.support(), Support::No);
-        assert!(outcome.reason().contains("XTVERSION"), "{}", outcome.reason());
+        assert!(
+            outcome.reason().contains("XTVERSION"),
+            "{}",
+            outcome.reason()
+        );
     }
 
     #[test]
@@ -1243,7 +1260,11 @@ mod tests {
             ..ProbeOutcome::default()
         };
         assert_eq!(outcome.support(), Support::Unknown);
-        assert!(outcome.reason().contains("no query"), "{}", outcome.reason());
+        assert!(
+            outcome.reason().contains("no query"),
+            "{}",
+            outcome.reason()
+        );
     }
 
     #[test]

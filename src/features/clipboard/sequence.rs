@@ -87,7 +87,6 @@ impl Selection {
             Self::Select => "whichever of the two xterm's selectToClipboard resource points at",
         }
     }
-
 }
 
 impl From<ClipboardSelection> for Selection {
@@ -375,7 +374,10 @@ mod tests {
     #[test]
     fn an_empty_payload_is_reported_as_a_clear_rather_than_a_no_op() {
         let notes = hazards(b"", set(Selection::Clipboard, b"").len(), false);
-        assert!(notes.iter().any(|note| note.contains("clears")), "{notes:?}");
+        assert!(
+            notes.iter().any(|note| note.contains("clears")),
+            "{notes:?}"
+        );
     }
 
     #[test]
@@ -398,6 +400,9 @@ mod tests {
         let big = TMUX_INPUT_LIMIT + 1;
         assert!(hazards(b"x", big, false).is_empty(), "outside tmux");
         let notes = hazards(b"x", big, true);
-        assert!(notes.iter().any(|note| note.contains("input-buffer-size")), "{notes:?}");
+        assert!(
+            notes.iter().any(|note| note.contains("input-buffer-size")),
+            "{notes:?}"
+        );
     }
 }

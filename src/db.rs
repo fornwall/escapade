@@ -45,7 +45,10 @@ const EMBEDDED_FEATURES: &[(&str, &str)] = &[
         "grapheme-clustering",
         include_str!("../data/features/grapheme-clustering.toml"),
     ),
-    ("hyperlinks", include_str!("../data/features/hyperlinks.toml")),
+    (
+        "hyperlinks",
+        include_str!("../data/features/hyperlinks.toml"),
+    ),
     (
         "notifications",
         include_str!("../data/features/notifications.toml"),
@@ -542,7 +545,10 @@ mod tests {
         let invisible = |ch: char| {
             matches!(ch as u32,
                 0xE000..=0xF8FF | 0xF_0000..=0xF_FFFD | 0x10_0000..=0x10_FFFD)
-                || matches!(ch, '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}' | '\u{00ad}')
+                || matches!(
+                    ch,
+                    '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}' | '\u{00ad}'
+                )
         };
         for (id, text) in EMBEDDED_FEATURES {
             if let Some(found) = text.chars().find(|&ch| invisible(ch)) {

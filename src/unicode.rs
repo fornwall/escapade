@@ -15,7 +15,7 @@
 //! bidi or normalization ever matter) is then a change to one file rather than
 //! to every caller.
 //!
-//! The Unicode version the tables describe is [`UNICODE_VERSION`].
+//! The Unicode version the tables describe is reported by [`unicode_version`].
 
 use std::fmt;
 
@@ -63,7 +63,7 @@ pub const MAX_SPEC_CODEPOINTS: usize = 1024;
 /// items and dashes is ignored, and `..` is accepted in place of `-`.
 ///
 /// As a convenience, an item that is not valid hex but *is* a single character is
-/// taken literally, so `escapade glyph supports 😊` does what it looks
+/// taken literally, so `escapade glyph probe 😊` does what it looks
 /// like. Hex always wins where both readings are possible: `A` is U+0041 either
 /// way, but `ABC` is U+0ABC rather than three letters.
 ///
@@ -130,7 +130,9 @@ fn parse(spec: &str, repeats: Repeats) -> Result<Vec<u32>> {
         if end < start {
             bail!("range `{item}` ends (U+{end:04X}) before it starts (U+{start:04X})");
         }
-        let span = usize::try_from(end - start).unwrap_or(usize::MAX).saturating_add(1);
+        let span = usize::try_from(end - start)
+            .unwrap_or(usize::MAX)
+            .saturating_add(1);
         if codepoints.len().saturating_add(span) > MAX_SPEC_CODEPOINTS {
             bail!(
                 "`{spec}` covers more than {MAX_SPEC_CODEPOINTS} codepoints — \
@@ -181,17 +183,15 @@ fn parse_codepoint(text: &str) -> Result<u32> {
 
     match u32::from_str_radix(digits, 16) {
         Ok(codepoint) if codepoint <= MAX_CODEPOINT => Ok(codepoint),
-        Ok(codepoint) => bail!(
-            "U+{codepoint:X} is above the highest Unicode codepoint U+{MAX_CODEPOINT:X}"
-        ),
+        Ok(codepoint) => {
+            bail!("U+{codepoint:X} is above the highest Unicode codepoint U+{MAX_CODEPOINT:X}")
+        }
         Err(_) if explicit => bail!("`{text}` is not a hexadecimal codepoint"),
         Err(_) => {
             let mut chars = text.chars();
             match (chars.next(), chars.next()) {
                 (Some(ch), None) => Ok(u32::from(ch)),
-                _ => bail!(
-                    "`{text}` is neither a hexadecimal codepoint nor a single character"
-                ),
+                _ => bail!("`{text}` is neither a hexadecimal codepoint nor a single character"),
             }
         }
     }
@@ -489,9 +489,7 @@ mod tests {
     fn parses_the_combination_from_the_brief() {
         assert_eq!(
             parse_spec("U+1F60A,U+1F60C-U+1F60F,U+1F611").unwrap(),
-            vec![
-                0x1_F60A, 0x1_F60C, 0x1_F60D, 0x1_F60E, 0x1_F60F, 0x1_F611
-            ]
+            vec![0x1_F60A, 0x1_F60C, 0x1_F60D, 0x1_F60E, 0x1_F60F, 0x1_F611]
         );
     }
 
@@ -528,10 +526,7 @@ mod tests {
         // A family emoji repeats the zero-width joiner. Dropping the repeat
         // would change the sequence into a different one.
         let family = parse_sequence("U+1F468,U+200D,U+1F469,U+200D,U+1F467").unwrap();
-        assert_eq!(
-            family,
-            vec![0x1_F468, 0x200D, 0x1_F469, 0x200D, 0x1_F467]
-        );
+        assert_eq!(family, vec![0x1_F468, 0x200D, 0x1_F469, 0x200D, 0x1_F467]);
         let text: String = family.iter().filter_map(|&cp| char::from_u32(cp)).collect();
         assert_eq!(grapheme_count(&text), 1, "still one grapheme cluster");
 
@@ -658,7 +653,10 @@ mod tests {
             "Latin Small Letter A with Acute",
             "the A is the letter being named, not the article"
         );
-        assert_eq!(title_case("MODIFIER LETTER SMALL H"), "Modifier Letter Small H");
+        assert_eq!(
+            title_case("MODIFIER LETTER SMALL H"),
+            "Modifier Letter Small H"
+        );
     }
 
     #[test]

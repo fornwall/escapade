@@ -166,7 +166,10 @@ mod tests {
         assert!(how.contains("rgb:f/0/0"), "{how}");
         assert!(how.contains("XParseColor"), "{how}");
         let payload = feature.payload.as_deref().unwrap();
-        assert!(payload.contains("#f00"), "the `#` form is the opposite case");
+        assert!(
+            payload.contains("#f00"),
+            "the `#` form is the opposite case"
+        );
     }
 
     #[test]

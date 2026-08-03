@@ -131,7 +131,9 @@ impl Origin {
             Self::Raster { name, format } => {
                 format!("{} ({format}, decoded to RGBA)", show(name.as_ref()))
             }
-            Self::Svg { name, dpi } => format!("{} (SVG, rasterized at {dpi} dpi)", show(name.as_ref())),
+            Self::Svg { name, dpi } => {
+                format!("{} (SVG, rasterized at {dpi} dpi)", show(name.as_ref()))
+            }
             Self::Graphviz { name, engine } => {
                 format!("{} (Graphviz, laid out with {engine})", show(name.as_ref()))
             }
@@ -209,7 +211,14 @@ impl Source {
 
 /// The layout engines `dot -K` accepts, for a helpful error message.
 pub const GRAPHVIZ_ENGINES: [&str; 8] = [
-    "dot", "neato", "twopi", "circo", "fdp", "sfdp", "osage", "patchwork",
+    "dot",
+    "neato",
+    "twopi",
+    "circo",
+    "fdp",
+    "sfdp",
+    "osage",
+    "patchwork",
 ];
 
 /// Everything the pipelines need beyond the bytes themselves.
@@ -508,7 +517,10 @@ fn load_flamegraph(
             )
         })?
     };
-    let stacks = collapsed.lines().filter(|line| !line.trim().is_empty()).count();
+    let stacks = collapsed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
     let svg = flamegraph::to_svg(&collapsed, settings.flamegraph, settings.target_width)?;
     // A flame graph has no transparent regions worth keeping, and inferno draws
     // its own background, so `--background` only shows through at the edges.

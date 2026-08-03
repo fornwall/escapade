@@ -60,7 +60,11 @@ pub fn size_verdict(sizes: &Sizes) -> Support {
 ///
 /// Fails if a dimension's thresholds contradict each other, or if the terminal
 /// cannot be set up. A terminal that stays quiet is a result, not an error.
-pub fn report(theme: &Theme, thresholds: Thresholds, format: Option<ProbeFormat>) -> Result<ExitCode> {
+pub fn report(
+    theme: &Theme,
+    thresholds: Thresholds,
+    format: Option<ProbeFormat>,
+) -> Result<ExitCode> {
     thresholds.check()?;
 
     let bare = thresholds.is_empty();
@@ -185,7 +189,10 @@ fn debug_report(
             } else {
                 theme.paint("✔", Ink::Good)
             };
-            println!("    {mark} {name:<8}{}", theme.paint(&asked.join(", "), Ink::Muted));
+            println!(
+                "    {mark} {name:<8}{}",
+                theme.paint(&asked.join(", "), Ink::Muted)
+            );
         }
     }
 
@@ -213,7 +220,10 @@ fn debug_report(
     println!(
         "  {} {}",
         theme.paint("escapade dimensions explain", Ink::Code),
-        theme.paint("for what these queries are and who answers them", Ink::Muted)
+        theme.paint(
+            "for what these queries are and who answers them",
+            Ink::Muted
+        )
     );
     println!();
 }
@@ -231,11 +241,7 @@ fn verdict_line(
         Support::No => ("✘", Ink::Bad, "no"),
         Support::Unknown => ("?", Ink::Warn, "unknown"),
     };
-    println!(
-        "  {} {}",
-        theme.paint(symbol, ink),
-        theme.paint(label, ink)
-    );
+    println!("  {} {}", theme.paint(symbol, ink), theme.paint(label, ink));
 
     let explanation = if thresholds.is_empty() {
         bare_explanation(sizes, support)
@@ -295,7 +301,10 @@ fn threshold_explanation(outcome: &Outcome) -> String {
 
 /// One line per quantity: what it is, and which rung of the chain answered.
 fn sources(theme: &Theme, sizes: &Sizes) {
-    println!("  {}", theme.paint("where the numbers came from", Ink::Accent));
+    println!(
+        "  {}",
+        theme.paint("where the numbers came from", Ink::Accent)
+    );
     let rows = [
         ("cells", sizes.cells()),
         ("window", sizes.window()),
@@ -339,7 +348,10 @@ fn sources(theme: &Theme, sizes: &Sizes) {
     if !sizes.queried {
         println!(
             "    {}",
-            theme.paint("(none sent — TIOCGWINSZ already had the answer)", Ink::Muted)
+            theme.paint(
+                "(none sent — TIOCGWINSZ already had the answer)",
+                Ink::Muted
+            )
         );
         return;
     }
@@ -384,10 +396,7 @@ fn sources(theme: &Theme, sizes: &Sizes) {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::{
-        features::dimensions::threshold::Bounds,
-        term::Multiplexer,
-    };
+    use crate::{features::dimensions::threshold::Bounds, term::Multiplexer};
 
     fn known() -> Sizes {
         Sizes {

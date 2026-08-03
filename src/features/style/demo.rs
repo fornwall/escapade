@@ -98,7 +98,11 @@ const STEPS: &[Step] = &[
     step!("resets", "Getting them off again", step_resets),
     step!("underlines", "Six shapes, one parameter", step_underlines),
     step!("colors", "Three colours, all independent", step_colors),
-    step!("truecolor", "What 24-bit colour does when it cannot", step_truecolor),
+    step!(
+        "truecolor",
+        "What 24-bit colour does when it cannot",
+        step_truecolor
+    ),
     step!("syntax", "Colons, semicolons, and the trap", step_syntax),
     step!("linter", "What this is actually for", step_linter),
     step!("restore", "Putting the terminal back", step_leave),
@@ -174,8 +178,10 @@ pub fn run(
     // demonstrating one that does not work withholds nothing — and refuses only when the
     // probe found a definite no for every single attribute.
     let findings = outcome.findings();
-    let hopeless =
-        !findings.is_empty() && findings.iter().all(|finding| finding.support == Support::No);
+    let hopeless = !findings.is_empty()
+        && findings
+            .iter()
+            .all(|finding| finding.support == Support::No);
     if hopeless && !force {
         term.restore();
         refuse_unsupported(theme);
@@ -550,11 +556,20 @@ fn step_resets(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.blank();
 
     for (attr, note) in [
-        (Attr::Bold, "and so does faint \u{2014} one reset for two attributes"),
+        (
+            Attr::Bold,
+            "and so does faint \u{2014} one reset for two attributes",
+        ),
         (Attr::Dim, "the other half of that pair"),
         (Attr::Italic, ""),
-        (Attr::Underline(UnderlineShape::Curly), "whatever the shape was"),
-        (Attr::Blink, "and so does rapid blink \u{2014} the other shared reset"),
+        (
+            Attr::Underline(UnderlineShape::Curly),
+            "whatever the shape was",
+        ),
+        (
+            Attr::Blink,
+            "and so does rapid blink \u{2014} the other shared reset",
+        ),
         (Attr::Strikethrough, ""),
         (Attr::Overline, "note the gap: 55, not 54"),
     ] {
@@ -620,7 +635,8 @@ fn step_underlines(ctx: &mut Ctx<'_>) -> Result<Flow> {
             "{}  {}  {}  {}  {}",
             ctx.theme
                 .paint(&format!("{:<5}", shape.sub_parameter_params()), Ink::Code),
-            ctx.theme.paint(&format!("{:<7}", shape.name()), Ink::Strong),
+            ctx.theme
+                .paint(&format!("{:<7}", shape.name()), Ink::Strong),
             ctx.theme.paint(shape.sketch(), Ink::Muted),
             rendition.wrap("the quick brown fox"),
             ctx.verdict(Attr::Underline(*shape))
@@ -685,7 +701,10 @@ fn step_colors(ctx: &mut Ctx<'_>) -> Result<Flow> {
             ctx.theme
                 .paint(&format!("{:<12}", role.name()), Ink::Strong),
             ctx.theme.paint(
-                &format!("{:<8}", format!("{}/{}", role.extended_param(), role.default_param())),
+                &format!(
+                    "{:<8}",
+                    format!("{}/{}", role.extended_param(), role.default_param())
+                ),
                 Ink::Code
             ),
             rendition.wrap("sample text"),
@@ -695,7 +714,9 @@ fn step_colors(ctx: &mut Ctx<'_>) -> Result<Flow> {
     }
     ctx.blank();
 
-    ctx.para("Each of them comes at three depths, and which one you get depends on how you wrote it:")?;
+    ctx.para(
+        "Each of them comes at three depths, and which one you get depends on how you wrote it:",
+    )?;
     ctx.blank();
 
     // One example per depth, with the depth naming itself rather than the strings
@@ -716,7 +737,8 @@ fn step_colors(ctx: &mut Ctx<'_>) -> Result<Flow> {
         );
         let row = format!(
             "{}  {}  {}",
-            ctx.theme.paint(&format!("--color {written:<9}"), Ink::Accent),
+            ctx.theme
+                .paint(&format!("--color {written:<9}"), Ink::Accent),
             rendition.wrap("sample text"),
             ctx.theme.paint(&note, Ink::Muted)
         );
@@ -845,7 +867,8 @@ fn step_syntax(ctx: &mut Ctx<'_>) -> Result<Flow> {
         let row = format!(
             "{}  {}  {}",
             ctx.theme.paint(&format!("{params:<20}"), Ink::Code),
-            ctx.theme.paint(&format!("{:<10}", syntax.name()), Ink::Accent),
+            ctx.theme
+                .paint(&format!("{:<10}", syntax.name()), Ink::Accent),
             ctx.theme.paint(gloss, ink)
         );
         ctx.indented(2, &row)?;
@@ -868,9 +891,8 @@ fn step_syntax(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.blank();
 
     ctx.indented(2, &ctx.theme.paint("what that looks like:", Ink::Muted))?;
-    let sample = format!(
-        "{CSI}1;31mbold red text{CSI}{semicolon}m and the rest of this line{CSI}0m"
-    );
+    let sample =
+        format!("{CSI}1;31mbold red text{CSI}{semicolon}m and the rest of this line{CSI}0m");
     ctx.raw_line(2, &sample)?;
     ctx.send(&format!("{CSI}0m"))?;
     ctx.blank();
@@ -911,7 +933,11 @@ fn step_linter(ctx: &mut Ctx<'_>) -> Result<Flow> {
         .with(Attr::Underline(UnderlineShape::Dotted))
         .with(Attr::Color(ColorRole::Underline, Color::Basic(12)));
 
-    ctx.indented(2, &ctx.theme.paint("a sentence with one misspelt word:", Ink::Muted))?;
+    ctx.indented(
+        2,
+        &ctx.theme
+            .paint("a sentence with one misspelt word:", Ink::Muted),
+    )?;
     ctx.blank();
     let sentence = format!(
         "The quick brown {} jumped over the lazy dog.",
@@ -936,7 +962,11 @@ fn step_linter(ctx: &mut Ctx<'_>) -> Result<Flow> {
     )?;
     ctx.blank();
 
-    ctx.indented(2, &ctx.theme.paint("three severities, one line of code:", Ink::Muted))?;
+    ctx.indented(
+        2,
+        &ctx.theme
+            .paint("three severities, one line of code:", Ink::Muted),
+    )?;
     ctx.blank();
     let diagnostics = format!(
         "let x = {}({}, {});",
@@ -993,11 +1023,17 @@ fn step_leave(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.sequence(
         &everything.close(),
         &[
-            ("22", "bold off \u{2014} and faint too, which shares this reset."),
+            (
+                "22",
+                "bold off \u{2014} and faint too, which shares this reset.",
+            ),
             ("23", "italic off."),
             ("24", "underline off, whatever the shape was."),
             ("29", "crossed out off."),
-            ("55", "overline off. Not 54, which is the reset for framed and encircled."),
+            (
+                "55",
+                "overline off. Not 54, which is the reset for framed and encircled.",
+            ),
             ("39", "foreground back to the default."),
             ("49", "background back to the default."),
             ("59", "underline colour back to following the foreground."),

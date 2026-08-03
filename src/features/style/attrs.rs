@@ -404,13 +404,11 @@ impl Attr {
     pub fn report_substitute(self, params: &str) -> Option<String> {
         match self {
             Self::Color(role, _) => parse_reported_color(params, role).map(Color::describe),
-            Self::Underline(shape) if !shape.has_portable_spelling() => {
-                UnderlineShape::ALL
-                    .iter()
-                    .filter(|other| **other != shape)
-                    .find(|other| report_keeps_underline(params, **other))
-                    .map(|other| format!("a {} underline", other.name()))
-            }
+            Self::Underline(shape) if !shape.has_portable_spelling() => UnderlineShape::ALL
+                .iter()
+                .filter(|other| **other != shape)
+                .find(|other| report_keeps_underline(params, **other))
+                .map(|other| format!("a {} underline", other.name())),
             _ => None,
         }
     }
@@ -429,7 +427,9 @@ fn report_keeps_underline(params: &str, shape: UnderlineShape) -> bool {
             // parameter at all is a report of "not underlined", which is what was
             // asked for.
             UnderlineShape::None => {
-                head == "24" || (head == "4" && sub == Some("0")) || !params_mention_underline(params)
+                head == "24"
+                    || (head == "4" && sub == Some("0"))
+                    || !params_mention_underline(params)
             }
             // A terminal may normalise `4:2` to ECMA-48's `21`.
             UnderlineShape::Double => {
@@ -914,7 +914,10 @@ mod tests {
             assert!(attr.flag().starts_with("--"), "{}", attr.label());
             assert!(!attr.name().is_empty());
         }
-        assert_eq!(Attr::Underline(UnderlineShape::Curly).label(), "underline:curly");
+        assert_eq!(
+            Attr::Underline(UnderlineShape::Curly).label(),
+            "underline:curly"
+        );
         assert_eq!(
             Attr::Color(ColorRole::Foreground, PROBE_RGB).label(),
             "foreground:truecolor"
@@ -1053,10 +1056,7 @@ mod tests {
         let (rendition, dropped) =
             Rendition::from_flags(&flags, &ColorPreference::allowed()).unwrap();
         assert!(dropped.is_empty());
-        assert_eq!(
-            rendition.params(),
-            "1;3;4:3;9;53;31;48;5;42;58:2::1:2:3"
-        );
+        assert_eq!(rendition.params(), "1;3;4:3;9;53;31;48;5;42;58:2::1:2:3");
         assert_eq!(rendition.close(), "\u{1b}[22;23;24;29;55;39;49;59m");
     }
 
@@ -1138,9 +1138,7 @@ mod tests {
             color: Some("nonsense".to_owned()),
             ..no_flags()
         };
-        assert!(
-            Rendition::from_flags(&flags, &ColorPreference::from_value(Some("1"))).is_err()
-        );
+        assert!(Rendition::from_flags(&flags, &ColorPreference::from_value(Some("1"))).is_err());
     }
 
     // -- reading a report back ---------------------------------------------
@@ -1311,10 +1309,10 @@ mod tests {
         }
         for depth in ColorDepth::ALL {
             assert!(
-                attrs
-                    .iter()
-                    .any(|attr| matches!(attr, Attr::Color(ColorRole::Foreground, color)
-                                         if color.depth() == *depth)),
+                attrs.iter().any(
+                    |attr| matches!(attr, Attr::Color(ColorRole::Foreground, color)
+                                         if color.depth() == *depth)
+                ),
                 "no foreground probe at {}",
                 depth.name()
             );

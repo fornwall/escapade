@@ -10,6 +10,12 @@
 //! VT100 answers. Terminals process input in order, so if the DA1 answer comes
 //! back and the Glyph Protocol answer did not, the terminal has demonstrably had
 //! its chance. That turns a guess into a conclusion.
+//!
+//! The query goes out inside [`crate::term::shielded`]. Draining every reply is
+//! what keeps a terminal's *answers* off the user's screen; this is the same
+//! obligation on the outbound side, because ECMA-48 says an APC string a terminal
+//! does not implement is discarded and not every terminal does that — macOS
+//! Terminal.app consumes the two-byte `ESC _` and prints the rest as text.
 
 use std::{
     io::{IsTerminal as _, stdin, stdout},
@@ -23,10 +29,10 @@ use crate::{
     cli::ProbeFormat,
     features::{
         Support,
-        glyph_protocol::{Format, GlyphReply, parse_reply, send, support_query},
+        glyph_protocol::{Format, GlyphReply, parse_reply, send_query, support_query},
     },
     input::{InputReader, Reply},
-    term::{CSI, Multiplexer, Term, pretty},
+    term::{CSI, Multiplexer, Term, pretty, shielded},
     theme::{Ink, Theme},
 };
 
@@ -130,7 +136,7 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
     term.enable_raw()?;
     input.drain();
 
-    send(term, outcome.multiplexer, &support_query())?;
+    send_query(term, outcome.multiplexer, &support_query())?;
     // The barrier is deliberately *not* wrapped for the multiplexer, so that it
     // reports on the round trip we can actually reason about. Note that a
     // multiplexer answers it from its own emulator rather than forwarding it,
@@ -159,7 +165,9 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
                     break;
                 }
             }
-            Reply::Csi { final_byte: 'c', .. } => {
+            Reply::Csi {
+                final_byte: 'c', ..
+            } => {
                 // The barrier came back. Anything sent before it has already
                 // been processed, so continuing to wait would learn nothing.
                 outcome.answered_barrier = true;
@@ -175,7 +183,13 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
     // here is what keeps probing invisible.
     if !outcome.answered_barrier
         && let Ok(Some(reply)) = input.wait_for_reply(DRAIN_TIMEOUT, |reply| {
-            matches!(reply, Reply::Csi { final_byte: 'c', .. })
+            matches!(
+                reply,
+                Reply::Csi {
+                    final_byte: 'c',
+                    ..
+                }
+            )
         })
     {
         outcome.replies.push(reply);
@@ -283,7 +297,10 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
     let program = std::env::var("TERM_PROGRAM").ok();
     print!("  {} {}", theme.paint("terminal:", Ink::Muted), term_name);
     if let Some(program) = program {
-        print!("{}", theme.paint(&format!("  (TERM_PROGRAM={program})"), Ink::Muted));
+        print!(
+            "{}",
+            theme.paint(&format!("  (TERM_PROGRAM={program})"), Ink::Muted)
+        );
     }
     println!();
     if let Some(multiplexer) = outcome.multiplexer {
@@ -390,7 +407,10 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
                 multiplexer.name()
             )
         );
-        println!("    {}", theme.paint(multiplexer.passthrough_hint(), Ink::Code));
+        println!(
+            "    {}",
+            theme.paint(multiplexer.passthrough_hint(), Ink::Code)
+        );
     }
 
     if verbose {
@@ -405,6 +425,14 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
             "    {}  {}",
             theme.paint(&pretty(&format!("{CSI}c")), Ink::Code),
             theme.paint("← the barrier", Ink::Muted)
+        );
+        println!(
+            "    {}  {}",
+            theme.paint(&pretty(&shielded(" <query> ")), Ink::Code),
+            theme.paint(
+                "← the shield each query goes inside, for terminals that print APC strings",
+                Ink::Muted
+            )
         );
 
         println!();
@@ -421,7 +449,10 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
     println!(
         "  {} {}",
         theme.paint("escapade glyph explain", Ink::Code),
-        theme.paint("for what this protocol is and who implements it", Ink::Muted)
+        theme.paint(
+            "for what this protocol is and who implements it",
+            Ink::Muted
+        )
     );
     println!();
 }
@@ -507,6 +538,47 @@ mod tests {
         assert!(outcome.conclusive());
         assert!(!outcome.answered_barrier);
         assert_eq!(outcome.formats, vec![Format::Glyf]);
+    }
+
+    #[test]
+    fn the_support_query_leaves_no_trace_on_a_terminal_that_prints_apc() {
+        // `25a1;s` is short enough to fit on any line, which is exactly why it
+        // must not be trusted to: the same path carries the codepoint queries
+        // `glyph probe` sends sixty-four at a time.
+        use crate::term::{
+            screen::{Screen, Strings},
+            shielded,
+        };
+        let mut screen = Screen::new(80, 24, Strings::Printed);
+        screen.goto(23, 0);
+        let before = screen.text();
+        screen.feed(&shielded(&support_query()));
+        assert_eq!(screen.text(), before, "the query was left on the screen");
+        assert_eq!(screen.cursor(), (23, 0));
+        assert_eq!(screen.scrolled(), 0);
+        assert!(screen.wrap());
+    }
+
+    #[test]
+    fn a_whole_batch_of_queries_leaves_no_trace_either() {
+        use crate::features::glyph_protocol::codepoint_query;
+        use crate::term::{
+            screen::{Screen, Strings},
+            shielded, wrapped,
+        };
+        let batch: String = (0xE000..0xE040)
+            .map(|codepoint| wrapped(None, &codepoint_query(codepoint)))
+            .collect();
+        let mut screen = Screen::new(80, 24, Strings::Printed);
+        screen.goto(23, 0);
+        let before = screen.text();
+        screen.feed(&shielded(&batch));
+        assert_eq!(screen.text(), before);
+        assert_eq!(
+            screen.scrolled(),
+            0,
+            "a screenful of leak would have scrolled"
+        );
     }
 
     #[test]

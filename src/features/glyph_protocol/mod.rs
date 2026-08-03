@@ -29,7 +29,7 @@ use anyhow::Result;
 use crate::{
     cli::{FeatureCommand, GlyphAction},
     db::Catalog,
-    term::{APC, Multiplexer, ST, Term},
+    term::{APC, Multiplexer, ST, Term, wrapped},
     theme::Theme,
 };
 
@@ -216,7 +216,7 @@ pub fn codepoint_query(codepoint: u32) -> String {
 
 /// `APC 25a1 ; r ; cp=… ; upm=… ; <base64> ST` — install an outline.
 ///
-/// The payload must already be base64; [`glyf::encode_base64`] produces it.
+/// The payload must already be base64; [`glyf::Outline::encode_base64`] produces it.
 #[must_use]
 pub fn register(
     codepoint: u32,
@@ -341,10 +341,27 @@ pub fn parse_reply(payload: &str) -> Option<GlyphReply> {
 ///
 /// Fails if stdout does.
 pub fn send(term: &mut Term, multiplexer: Option<Multiplexer>, sequence: &str) -> Result<()> {
-    match multiplexer {
-        Some(multiplexer) => term.write_now(&multiplexer.wrap(sequence)),
-        None => term.write_now(sequence),
-    }
+    term.write_now(&wrapped(multiplexer, sequence))
+}
+
+/// Sends a *query*, which must leave the screen exactly as it found it.
+///
+/// Same wrapping as [`send`], with [`crate::term::shielded`] outside it: a
+/// terminal that does not implement the protocol is supposed to ignore an APC
+/// string wholesale, and the ones that instead print the body — macOS
+/// Terminal.app consumes only the `ESC _` — would otherwise write `25a1;s` at the
+/// prompt for every question asked. `escapade glyph probe` asks one per
+/// codepoint, so the leak is a screenful rather than a line.
+///
+/// [`send`] is deliberately left alone: registrations and clears are for
+/// terminals that answered the query, and the demo owns the screen it draws on,
+/// so restoring the cursor and erasing a line there would fight the caller.
+///
+/// # Errors
+///
+/// Fails if stdout does.
+pub fn send_query(term: &mut Term, multiplexer: Option<Multiplexer>, query: &str) -> Result<()> {
+    term.write_query(&wrapped(multiplexer, query))
 }
 
 /// Entry point for `escapade glyph …`.

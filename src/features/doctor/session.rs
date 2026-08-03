@@ -264,8 +264,13 @@ impl Session {
         }
         self.enable_raw()?;
 
+        // Shielded as one batch. Half of what `doctor` asks is a control string —
+        // XTGETTCAP is `DCS + q <hex> ST`, DECRQSS is `DCS $ q m ST`, the iTerm2
+        // cell-size question is an OSC — and a terminal with no state for the
+        // introducer prints the body instead of discarding it. A round asks for
+        // one capability per query, so the leak would be the whole list.
         self.writer
-            .write_all(queries.as_bytes())
+            .write_all(crate::term::shielded(queries).as_bytes())
             .context("writing queries to the terminal")?;
         // The barrier is deliberately unwrapped even under a multiplexer, so it
         // reports on the round trip that can actually be reasoned about.
@@ -473,7 +478,10 @@ mod tests {
 
     #[test]
     fn joining_two_failures_reads_as_one_sentence() {
-        assert_eq!(lower_first("On the stdio channel, x."), "on the stdio channel, x.");
+        assert_eq!(
+            lower_first("On the stdio channel, x."),
+            "on the stdio channel, x."
+        );
         assert_eq!(lower_first(""), "");
         assert_eq!(lower_first("a"), "a");
     }
@@ -490,9 +498,7 @@ mod tests {
             params: "?62;4".to_owned(),
             final_byte: 'c',
         };
-        let is_barrier = |reply: &Reply| {
-            matches!(reply, Reply::Csi { params, final_byte: 'c' } if !params.starts_with('>'))
-        };
+        let is_barrier = |reply: &Reply| matches!(reply, Reply::Csi { params, final_byte: 'c' } if !params.starts_with('>'));
         assert!(!is_barrier(&da2));
         assert!(is_barrier(&da1));
         // tmux answers DA1 without the `?` private prefix.

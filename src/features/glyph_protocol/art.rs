@@ -318,12 +318,7 @@ pub fn spinner_frame(frame: u32) -> Outline {
 #[must_use]
 pub fn ship() -> Outline {
     Outline {
-        contours: vec![polygon(&[
-            (300, 880),
-            (110, 200),
-            (300, 330),
-            (490, 200),
-        ])],
+        contours: vec![polygon(&[(300, 880), (110, 200), (300, 330), (490, 200)])],
     }
 }
 
@@ -755,11 +750,7 @@ mod tests {
     #[test]
     fn flatten_turns_a_curve_into_many_segments() {
         let curved = Contour {
-            points: vec![
-                Point::on(0, 0),
-                Point::off(500, 1000),
-                Point::on(1000, 0),
-            ],
+            points: vec![Point::on(0, 0), Point::off(500, 1000), Point::on(1000, 0)],
         };
         let segments = flatten(&curved);
         assert!(
@@ -845,8 +836,9 @@ mod tests {
             assert_eq!(line.chars().count(), 20);
         }
         assert!(
-            rendered.iter().any(|line| line.contains('\u{28ff}')
-                || line.chars().any(|ch| ch != '\u{2800}')),
+            rendered
+                .iter()
+                .any(|line| line.contains('\u{28ff}') || line.chars().any(|ch| ch != '\u{2800}')),
             "nothing was drawn"
         );
     }

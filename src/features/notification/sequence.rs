@@ -384,7 +384,10 @@ fn build_osc9(request: &Request) -> Built {
         ));
     }
     if request.id_explicit {
-        lost.push("OSC 9 has no notification id, so --id was dropped and this cannot be replaced later".to_owned());
+        lost.push(
+            "OSC 9 has no notification id, so --id was dropped and this cannot be replaced later"
+                .to_owned(),
+        );
     }
     if let Some(note) = length_warning(&text, Protocol::Osc9) {
         lost.push(note);
@@ -490,7 +493,10 @@ fn build_osc777(request: &Request) -> Built {
         ));
     }
     if request.id_explicit {
-        lost.push("OSC 777 has no notification id, so --id was dropped and this cannot be replaced later".to_owned());
+        lost.push(
+            "OSC 777 has no notification id, so --id was dropped and this cannot be replaced later"
+                .to_owned(),
+        );
     }
     if let Some(note) = length_warning(&format!("{title}{body}"), Protocol::Osc777) {
         lost.push(note);
@@ -630,7 +636,11 @@ fn build_osc99(request: &Request) -> Built {
 /// same answer as one that concatenates first.
 #[must_use]
 pub fn chunk_payload(text: &str, plain: bool) -> Vec<String> {
-    let limit = if plain { MAX_PLAIN_PAYLOAD } else { MAX_RAW_CHUNK };
+    let limit = if plain {
+        MAX_PLAIN_PAYLOAD
+    } else {
+        MAX_RAW_CHUNK
+    };
     let mut chunks = Vec::new();
     for chunk in split_on_char_boundaries(text, limit) {
         chunks.push(if plain {
@@ -812,7 +822,10 @@ mod tests {
             .collect();
         let safe = Safe::new(&hostile);
         for ch in safe.as_str().chars() {
-            assert!(!ch.is_control(), "control character {ch:?} survived sanitizing");
+            assert!(
+                !ch.is_control(),
+                "control character {ch:?} survived sanitizing"
+            );
         }
     }
 
@@ -827,10 +840,7 @@ mod tests {
         assert_eq!(safe_id("build-42").as_deref(), Some("build-42"));
         assert_eq!(safe_id("a.b+c_d").as_deref(), Some("a.b+c_d"));
         // A hostile id would come back to us in the activation report.
-        assert_eq!(
-            safe_id("x;p=close\u{1b}\\").as_deref(),
-            Some("x-p-close")
-        );
+        assert_eq!(safe_id("x;p=close\u{1b}\\").as_deref(), Some("x-p-close"));
         assert_eq!(safe_id("!!!"), None);
         assert_eq!(safe_id(""), None);
     }
@@ -840,16 +850,16 @@ mod tests {
     #[test]
     fn osc9_is_one_field_of_text() {
         let built = build(Protocol::Osc9, &request(None, "42 tests passed"));
-        assert_eq!(
-            built.sequences,
-            vec![format!("{E}]9;42 tests passed{E}\\")]
-        );
+        assert_eq!(built.sequences, vec![format!("{E}]9;42 tests passed{E}\\")]);
         assert!(built.lost.is_empty());
     }
 
     #[test]
     fn osc9_folds_a_title_in_and_says_it_did() {
-        let built = build(Protocol::Osc9, &request(Some("Build finished"), "42 tests passed"));
+        let built = build(
+            Protocol::Osc9,
+            &request(Some("Build finished"), "42 tests passed"),
+        );
         assert_eq!(
             built.sequences,
             vec![format!("{E}]9;Build finished — 42 tests passed{E}\\")]
@@ -912,7 +922,9 @@ mod tests {
         );
         assert_eq!(
             built.sequences,
-            vec![format!("{E}]777;notify;Build finished;42 tests passed{E}\\")]
+            vec![format!(
+                "{E}]777;notify;Build finished;42 tests passed{E}\\"
+            )]
         );
         assert!(built.lost.is_empty());
     }
@@ -978,10 +990,7 @@ mod tests {
     fn osc99_matches_the_specifications_one_line_example() {
         // The spec's own example is `printf '\x1b]99;;Hello world\x1b\\'`.
         let built = build(Protocol::Osc99, &request(None, "Hello world"));
-        assert_eq!(
-            built.sequences,
-            vec![format!("{E}]99;;Hello world{E}\\")]
-        );
+        assert_eq!(built.sequences, vec![format!("{E}]99;;Hello world{E}\\")]);
         assert!(built.lost.is_empty());
     }
 
@@ -1004,10 +1013,7 @@ mod tests {
         let mut req = request(Some("t"), "b");
         req.id = Some("i".to_owned());
         let built = build(Protocol::Osc99, &req);
-        let (last, earlier) = built
-            .sequences
-            .split_last()
-            .expect("at least one sequence");
+        let (last, earlier) = built.sequences.split_last().expect("at least one sequence");
         for sequence in earlier {
             assert!(sequence.contains("d=0"), "{sequence:?}");
         }
@@ -1024,7 +1030,11 @@ mod tests {
             let mut req = request(None, "body");
             req.urgency = Some(urgency);
             let built = build(Protocol::Osc99, &req);
-            assert!(built.sequences[0].contains(wire), "{:?}", built.sequences[0]);
+            assert!(
+                built.sequences[0].contains(wire),
+                "{:?}",
+                built.sequences[0]
+            );
             assert!(built.lost.is_empty(), "urgency is expressible here");
         }
         assert_eq!(Urgency::default(), Urgency::Normal);
@@ -1054,7 +1064,11 @@ mod tests {
     fn osc99_base64_encodes_text_it_cannot_write_literally() {
         let built = build(Protocol::Osc99, &request(None, "done; 42 passed"));
         assert_eq!(built.sequences.len(), 1);
-        assert!(built.sequences[0].contains("e=1"), "{:?}", built.sequences[0]);
+        assert!(
+            built.sequences[0].contains("e=1"),
+            "{:?}",
+            built.sequences[0]
+        );
         // `ZG9uZTsgNDIgcGFzc2Vk` is base64 for "done; 42 passed".
         assert_eq!(
             built.sequences[0],
@@ -1190,7 +1204,10 @@ mod tests {
                 .to_owned();
             rebuilt.extend(BASE64_STANDARD.decode(&payload).expect("valid base64"));
         }
-        assert_eq!(String::from_utf8(rebuilt).expect("utf-8"), format!("{body};"));
+        assert_eq!(
+            String::from_utf8(rebuilt).expect("utf-8"),
+            format!("{body};")
+        );
     }
 
     #[test]
@@ -1247,9 +1264,15 @@ mod tests {
 
     #[test]
     fn ignores_osc_replies_belonging_to_something_else() {
-        assert!(parse_osc99_reply("11;rgb:1c1c/1c1c/1c1c").is_none(), "colours");
+        assert!(
+            parse_osc99_reply("11;rgb:1c1c/1c1c/1c1c").is_none(),
+            "colours"
+        );
         assert!(parse_osc99_reply("").is_none());
-        assert!(parse_osc99_reply("99;i=x:p=close;").is_none(), "not a query");
+        assert!(
+            parse_osc99_reply("99;i=x:p=close;").is_none(),
+            "not a query"
+        );
         assert!(parse_osc99_reply("99;i=x").is_none(), "no payload field");
     }
 

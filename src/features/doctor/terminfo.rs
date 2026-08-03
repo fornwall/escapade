@@ -216,7 +216,11 @@ pub fn parse(text: &str) -> Entry {
             seen_alias_line = true;
             let names = trimmed.trim_end_matches(',');
             let mut fields = names.split('|');
-            fields.next().unwrap_or_default().trim().clone_into(&mut entry.name);
+            fields
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .clone_into(&mut entry.name);
             // The description is the last field; an entry with no aliases and no
             // description leaves it empty rather than repeating the name.
             fields
@@ -335,11 +339,11 @@ xterm-256color|xterm with 256 colors,
     fn parses_the_three_capability_shapes() {
         let entry = parse(XTERM);
         assert_eq!(entry.get("am"), Some(&Value::Boolean));
-        assert_eq!(entry.get("colors"), Some(&Value::Number("0x100".to_owned())));
         assert_eq!(
-            entry.get("kbs"),
-            Some(&Value::String("^?".to_owned()))
+            entry.get("colors"),
+            Some(&Value::Number("0x100".to_owned()))
         );
+        assert_eq!(entry.get("kbs"), Some(&Value::String("^?".to_owned())));
         assert_eq!(entry.get("am").unwrap().text(), None);
         assert_eq!(entry.get("colors").unwrap().text(), Some("0x100"));
     }
@@ -389,7 +393,10 @@ xterm-256color|xterm with 256 colors,
     #[test]
     fn an_equals_inside_a_string_value_is_kept() {
         let entry = parse("foo|Foo,\n\tSync=\\EP=%p1%ds\\E\\\\,\n");
-        assert_eq!(entry.get("Sync").unwrap().text(), Some("\\EP=%p1%ds\\E\\\\"));
+        assert_eq!(
+            entry.get("Sync").unwrap().text(),
+            Some("\\EP=%p1%ds\\E\\\\")
+        );
     }
 
     #[test]
@@ -451,7 +458,10 @@ xterm-256color|xterm with 256 colors,
     #[test]
     fn split_capabilities_keeps_escaped_commas_together() {
         assert_eq!(split_capabilities("am, bce,"), vec!["am", "bce"]);
-        assert_eq!(split_capabilities("acsc=a\\,b, am,"), vec!["acsc=a\\,b", "am"]);
+        assert_eq!(
+            split_capabilities("acsc=a\\,b, am,"),
+            vec!["acsc=a\\,b", "am"]
+        );
         assert_eq!(split_capabilities(",,,"), Vec::<&str>::new());
     }
 

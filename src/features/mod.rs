@@ -9,12 +9,12 @@ pub mod explain;
 pub mod glyph_protocol;
 pub mod grapheme;
 pub mod hyperlink;
-pub mod kitty_graphics;
 pub mod keys;
+pub mod kitty_graphics;
 pub mod notification;
 pub mod progress;
-pub mod textsize;
 pub mod style;
+pub mod textsize;
 pub mod unscroll;
 
 use anyhow::{Context as _, Result};
@@ -49,7 +49,13 @@ pub fn list(catalog: &Catalog, no_color: bool) {
             theme.paint(&feature.name, Ink::Accent),
             theme.paint(&format!("[{}]", feature.status.label()), Ink::Muted)
         );
-        println!("  {}", theme.paint(&format!("$ escapade {}", subcommand_for(&feature.id)), Ink::Code));
+        println!(
+            "  {}",
+            theme.paint(
+                &format!("$ escapade {}", subcommand_for(&feature.id)),
+                Ink::Code
+            )
+        );
         for line in wrap(&feature.tagline, theme.width().saturating_sub(4)) {
             println!("    {line}");
         }
@@ -261,10 +267,7 @@ pub fn select_steps(names: &[&str], only: Option<&str>, step: Option<usize>) -> 
             // Deliberately free of the word "step": this is shared with
             // `doctor`, which matches checks. The caller adds the noun through
             // `anyhow` context.
-            [] => anyhow::bail!(
-                "`{wanted}` is not one of: {}",
-                names.join(", ")
-            ),
+            [] => anyhow::bail!("`{wanted}` is not one of: {}", names.join(", ")),
             several => anyhow::bail!(
                 "`{wanted}` is ambiguous — it matches {}: {}",
                 several.len(),
@@ -278,7 +281,9 @@ pub fn select_steps(names: &[&str], only: Option<&str>, step: Option<usize>) -> 
     }
 
     Ok(Selection {
-        start: step.map_or(0, |step| step.saturating_sub(1)).min(names.len() - 1),
+        start: step
+            .map_or(0, |step| step.saturating_sub(1))
+            .min(names.len() - 1),
         single: false,
     })
 }
@@ -375,7 +380,13 @@ mod tests {
     #[test]
     fn only_matches_a_step_name_exactly() {
         let selection = select_steps(DEMO, Some("mandelbrot"), None).unwrap();
-        assert_eq!(selection, Selection { start: 2, single: true });
+        assert_eq!(
+            selection,
+            Selection {
+                start: 2,
+                single: true
+            }
+        );
     }
 
     #[test]
@@ -392,8 +403,13 @@ mod tests {
     #[test]
     fn only_rejects_an_ambiguous_prefix_and_says_which() {
         // `manda` prefixes both `mandelbrot` and `mandala`.
-        let error = select_steps(DEMO, Some("mand"), None).unwrap_err().to_string();
-        assert!(error.contains("mandelbrot") && error.contains("mandala"), "{error}");
+        let error = select_steps(DEMO, Some("mand"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("mandelbrot") && error.contains("mandala"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -406,7 +422,9 @@ mod tests {
 
     #[test]
     fn only_lists_the_real_names_when_it_finds_nothing() {
-        let error = select_steps(DEMO, Some("nope"), None).unwrap_err().to_string();
+        let error = select_steps(DEMO, Some("nope"), None)
+            .unwrap_err()
+            .to_string();
         for name in DEMO {
             assert!(error.contains(name), "{error} should mention {name}");
         }
@@ -416,7 +434,10 @@ mod tests {
     fn step_is_one_based_and_clamps() {
         assert_eq!(select_steps(DEMO, None, Some(1)).unwrap().start, 0);
         assert_eq!(select_steps(DEMO, None, Some(3)).unwrap().start, 2);
-        assert_eq!(select_steps(DEMO, None, Some(999)).unwrap().start, DEMO.len() - 1);
+        assert_eq!(
+            select_steps(DEMO, None, Some(999)).unwrap().start,
+            DEMO.len() - 1
+        );
         assert_eq!(select_steps(DEMO, None, Some(0)).unwrap().start, 0);
     }
 

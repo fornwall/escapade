@@ -184,7 +184,11 @@ fn no_terminal(theme: &Theme, command: &ColorCommand) -> ExitCode {
         );
     } else {
         println!();
-        println!("  {} {}", theme.paint("?", Ink::Warn), theme.paint("no answer", Ink::Warn));
+        println!(
+            "  {} {}",
+            theme.paint("?", Ink::Warn),
+            theme.paint("no answer", Ink::Warn)
+        );
         for line in wrap(reason, theme.width().saturating_sub(4)) {
             println!("    {}", theme.paint(&line, Ink::Muted));
         }
@@ -312,7 +316,11 @@ fn summary(theme: &Theme, answers: &Answers, verdict: Option<Verdict>) {
 
     if let (Some(fg), Some(bg)) = (foreground, background) {
         let ratio = fg.contrast_ratio(bg);
-        let ink = if ratio >= WCAG_AA_BODY { Ink::Good } else { Ink::Warn };
+        let ink = if ratio >= WCAG_AA_BODY {
+            Ink::Good
+        } else {
+            Ink::Warn
+        };
         println!();
         println!(
             "  {} {}   {}",
@@ -372,7 +380,11 @@ fn summary(theme: &Theme, answers: &Answers, verdict: Option<Verdict>) {
 
 /// Why no verdict could be reached, in one sentence a user can act on.
 fn unanswered_reason(answers: &Answers) -> &'static str {
-    if !answers.answers.iter().any(|a| a.target == Target::Background) {
+    if !answers
+        .answers
+        .iter()
+        .any(|a| a.target == Target::Background)
+    {
         "The background was not among the colours asked about, and light or dark is a statement \
          about the background."
     } else if answers.silence_is_conclusive() {
@@ -385,8 +397,10 @@ fn unanswered_reason(answers: &Answers) -> &'static str {
                 "Nothing came back, and tmux is in the way — it answers some colour queries from \
                  its own idea of the palette and drops others."
             }
-            _ => "Nothing came back, and a multiplexer is in the way; it may have dropped the \
-                  query or the reply.",
+            _ => {
+                "Nothing came back, and a multiplexer is in the way; it may have dropped the \
+                  query or the reply."
+            }
         }
     } else {
         "Nothing came back at all — not even the device-attributes request every terminal \
@@ -594,7 +608,10 @@ mod tests {
     #[test]
     fn json_is_one_object_per_line_and_ends_with_a_newline() {
         let answers = dark_answers();
-        let output = json_report(&answers, verdict(None, Some(Rgb::from_rgb8(0x1e, 0x1e, 0x2e))));
+        let output = json_report(
+            &answers,
+            verdict(None, Some(Rgb::from_rgb8(0x1e, 0x1e, 0x2e))),
+        );
         assert!(output.ends_with('\n'));
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 4, "three colours and one verdict: {output}");
@@ -734,7 +751,11 @@ mod tests {
         let answers = dark_answers();
         // Exercising the whole layout path is what catches a panic in a width
         // calculation; the content assertions below are on the pieces.
-        text_report(&theme, &answers, verdict(None, Some(Rgb::from_rgb8(0x1e, 0x1e, 0x2e))));
+        text_report(
+            &theme,
+            &answers,
+            verdict(None, Some(Rgb::from_rgb8(0x1e, 0x1e, 0x2e))),
+        );
         assert_eq!(swatch(&theme, Rgb::BLACK), "", "no styling means no swatch");
     }
 

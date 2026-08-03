@@ -1,4 +1,4 @@
-//! `escapade glyph supports <CODEPOINTS>` — ask the terminal what it
+//! `escapade glyph probe <CODEPOINTS>` — ask the terminal what it
 //! can actually draw.
 //!
 //! This is the `q` verb applied in bulk. For each codepoint the terminal answers
@@ -17,8 +17,8 @@
 
 use std::{
     collections::HashMap,
-    process::ExitCode,
     io::{IsTerminal as _, stdout},
+    process::ExitCode,
     time::{Duration, Instant},
 };
 
@@ -28,10 +28,10 @@ use crate::{
     cli::ProbeFormat,
     features::Support,
     features::glyph_protocol::{
-        Coverage, GlyphReply, codepoint_query, is_private_use, parse_reply, send,
+        Coverage, GlyphReply, codepoint_query, is_private_use, parse_reply,
     },
     input::{InputReader, Reply},
-    term::{CSI, Multiplexer, Term},
+    term::{CSI, Multiplexer, Term, wrapped},
     theme::{Ink, Theme},
     unicode::{self, CharInfo},
 };
@@ -65,7 +65,7 @@ pub struct Row {
     pub verdict: Verdict,
 }
 
-/// Renders `escapade glyph supports`.
+/// Renders `escapade glyph probe`.
 ///
 /// # Errors
 ///
@@ -173,9 +173,14 @@ fn query_all(codepoints: &[u32]) -> Result<HashMap<u32, Coverage>> {
 
     let mut coverage = HashMap::with_capacity(codepoints.len());
     for batch in codepoints.chunks(BATCH_SIZE) {
-        for &codepoint in batch {
-            send(&mut term, multiplexer, &codepoint_query(codepoint))?;
-        }
+        // One shield for the whole batch rather than one per query: a terminal
+        // that prints APC strings instead of ignoring them would leak all
+        // sixty-four onto the same line, and one erase takes care of all of them.
+        let queries: String = batch
+            .iter()
+            .map(|&codepoint| wrapped(multiplexer, &codepoint_query(codepoint)))
+            .collect();
+        term.write_query(&queries)?;
         // Barrier: sent unwrapped, because we want to know that the round trip
         // completed even if a multiplexer swallowed the queries themselves.
         term.write_now(&format!("{CSI}c"))?;
@@ -201,7 +206,9 @@ fn query_all(codepoints: &[u32]) -> Result<HashMap<u32, Coverage>> {
                 }
                 // The batch has been fully processed; anything unanswered in it
                 // is going to stay unanswered.
-                Reply::Csi { final_byte: 'c', .. } => break,
+                Reply::Csi {
+                    final_byte: 'c', ..
+                } => break,
                 _ => {}
             }
         }
@@ -381,7 +388,10 @@ fn summarize(theme: &Theme, rows: &[Row], interactive: bool, multiplexer: Option
     println!(
         "  {}",
         theme.paint(
-            &format!("Unicode {} · escapade glyph explain", unicode::unicode_version()),
+            &format!(
+                "Unicode {} · escapade glyph explain",
+                unicode::unicode_version()
+            ),
             Ink::Muted
         )
     );
@@ -401,7 +411,13 @@ mod tests {
 
     #[test]
     fn the_three_verdicts_render_as_the_brief_specifies() {
-        let smiling = row(0x1_F60A, Verdict::Renders(Coverage { system: true, glossary: false }));
+        let smiling = row(
+            0x1_F60A,
+            Verdict::Renders(Coverage {
+                system: true,
+                glossary: false,
+            }),
+        );
         assert_eq!(rendered(&smiling.info), "😊");
 
         let unsupported = row(0xE0A0, Verdict::Unsupported);
@@ -426,16 +442,34 @@ mod tests {
     fn annotation_distinguishes_coverage_sources() {
         let info = unicode::describe(0x41);
         assert_eq!(
-            annotation(&info, Verdict::Renders(Coverage { system: true, glossary: false })),
+            annotation(
+                &info,
+                Verdict::Renders(Coverage {
+                    system: true,
+                    glossary: false
+                })
+            ),
             "system font"
         );
         assert_eq!(
-            annotation(&info, Verdict::Renders(Coverage { system: false, glossary: true })),
+            annotation(
+                &info,
+                Verdict::Renders(Coverage {
+                    system: false,
+                    glossary: true
+                })
+            ),
             "registered this session"
         );
         assert!(
-            annotation(&info, Verdict::Renders(Coverage { system: true, glossary: true }))
-                .contains("shadowed")
+            annotation(
+                &info,
+                Verdict::Renders(Coverage {
+                    system: true,
+                    glossary: true
+                })
+            )
+            .contains("shadowed")
         );
     }
 
@@ -471,7 +505,13 @@ mod tests {
     fn printing_a_report_never_panics_on_awkward_input() {
         let theme = Theme::plain();
         let rows = vec![
-            row(0x41, Verdict::Renders(Coverage { system: true, glossary: false })),
+            row(
+                0x41,
+                Verdict::Renders(Coverage {
+                    system: true,
+                    glossary: false,
+                }),
+            ),
             row(0x1_F60A, Verdict::Unsupported),
             row(0xD800, Verdict::Unknown),
             row(0x1B, Verdict::Unknown),

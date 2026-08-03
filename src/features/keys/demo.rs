@@ -108,13 +108,29 @@ macro_rules! step {
 /// explained.
 const STEPS: &[Step] = &[
     step!("handshake", "Ask, do not assume", step_handshake),
-    step!("push-pop", "Two ways to set flags, one of them polite", step_push_pop),
-    step!("disambiguate", "Keys that used to be indistinguishable", step_disambiguate),
+    step!(
+        "push-pop",
+        "Two ways to set flags, one of them polite",
+        step_push_pop
+    ),
+    step!(
+        "disambiguate",
+        "Keys that used to be indistinguishable",
+        step_disambiguate
+    ),
     step!("shift-enter", "Shift+Enter, at last", step_shift_enter),
     step!("release", "Keys that come back up", step_release),
     step!("repeat", "Holding a key down", step_repeat),
-    step!("text", "All keys as escape codes, and the text they made", step_text),
-    step!("chord", "Finale: a chord legacy encoding cannot express", step_chord),
+    step!(
+        "text",
+        "All keys as escape codes, and the text they made",
+        step_text
+    ),
+    step!(
+        "chord",
+        "Finale: a chord legacy encoding cannot express",
+        step_chord
+    ),
     step!("restore", "Putting the keyboard back", step_leave),
 ];
 
@@ -169,7 +185,12 @@ pub fn list_steps(theme: &Theme) {
 /// # Errors
 ///
 /// Fails if the terminal cannot be set up or written to.
-pub fn run(theme: &Theme, force: bool, only: Option<&str>, start_step: Option<usize>) -> Result<()> {
+pub fn run(
+    theme: &Theme,
+    force: bool,
+    only: Option<&str>,
+    start_step: Option<usize>,
+) -> Result<()> {
     let selection = crate::features::select_steps(&step_names(), only, start_step)?;
 
     let mut term = Term::new()?;
@@ -578,7 +599,10 @@ fn step_handshake(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.sequence(
         &format!("{}{CSI}c", query()),
         &[
-            ("CSI ? u", "which progressive-enhancement flags are in effect right now?"),
+            (
+                "CSI ? u",
+                "which progressive-enhancement flags are in effect right now?",
+            ),
             (
                 "CSI c",
                 "Primary Device Attributes, sent straight after as a barrier. Every terminal since \
@@ -611,7 +635,8 @@ fn step_handshake(ctx: &mut Ctx<'_>) -> Result<Flow> {
     } else {
         ctx.line(&format!(
             "  {}",
-            ctx.theme.paint("… silence. Nothing here answered.", Ink::Warn)
+            ctx.theme
+                .paint("… silence. Nothing here answered.", Ink::Warn)
         ))?;
         ctx.blank();
         ctx.note(
@@ -663,7 +688,10 @@ fn step_push_pop(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.sequence(
         &format!("{}   …   {}", push(five), pop()),
         &[
-            ("CSI > 5 u", "push: remember what is there, then apply these."),
+            (
+                "CSI > 5 u",
+                "push: remember what is there, then apply these.",
+            ),
             (
                 "CSI < u",
                 "pop: put back exactly what was there, without ever having to know what it was.",
@@ -798,8 +826,10 @@ fn step_release(ctx: &mut Ctx<'_>) -> Result<Flow> {
     if collected.saw_release() {
         ctx.line(&format!(
             "  {}",
-            ctx.theme
-                .paint("✔ a release event — impossible to observe without this flag", Ink::Good)
+            ctx.theme.paint(
+                "✔ a release event — impossible to observe without this flag",
+                Ink::Good
+            )
         ))?;
     } else if !collected.is_empty() {
         ctx.note(
@@ -834,7 +864,8 @@ fn step_repeat(ctx: &mut Ctx<'_>) -> Result<Flow> {
         .filter(|key| key.kind == KeyEventKind::Repeat)
         .count();
     if repeats > 0 {
-        let text = format!("✔ {repeats} repeat events, each marked as a repeat rather than a press");
+        let text =
+            format!("✔ {repeats} repeat events, each marked as a repeat rather than a press");
         ctx.line(&format!("  {}", ctx.theme.paint(&text, Ink::Good)))?;
     } else {
         ctx.note(
@@ -859,7 +890,10 @@ fn step_text(ctx: &mut Ctx<'_>) -> Result<Flow> {
         "CSI 97 : 65 ; 2 ; 65 u",
         &[
             ("97", "the key: lowercase a, always the unshifted keycap."),
-            (": 65", "the shifted key, present only because shift is held."),
+            (
+                ": 65",
+                "the shifted key, present only because shift is held.",
+            ),
             ("; 2", "the modifiers: shift."),
             ("; 65", "the text this keypress produced — capital A."),
         ],
@@ -1027,10 +1061,19 @@ fn step_leave(ctx: &mut Ctx<'_>) -> Result<Flow> {
     )?;
     ctx.blank();
     for (command, purpose) in [
-        ("escapade keys watch --legacy", "what a program from 1995 sees"),
+        (
+            "escapade keys watch --legacy",
+            "what a program from 1995 sees",
+        ),
         ("escapade keys watch", "…and what one written today sees"),
-        ("escapade keys probe --format debug", "which flags this terminal honours"),
-        ("escapade keys explain", "the protocol, and who implements it"),
+        (
+            "escapade keys probe --format debug",
+            "which flags this terminal honours",
+        ),
+        (
+            "escapade keys explain",
+            "the protocol, and who implements it",
+        ),
     ] {
         ctx.line(&format!(
             "  {}  {}",
@@ -1065,8 +1108,7 @@ mod tests {
         assert_eq!(names.len(), STEPS.len());
         for name in &names {
             assert!(
-                name.chars()
-                    .all(|ch| ch.is_ascii_lowercase() || ch == '-'),
+                name.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-'),
                 "`{name}` is not kebab-case"
             );
             assert!(name.len() <= 14, "`{name}` is too long to type");
@@ -1099,7 +1141,10 @@ mod tests {
         let error = crate::features::select_steps(&names, Some("nope"), None)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("handshake") && error.contains("chord"), "{error}");
+        assert!(
+            error.contains("handshake") && error.contains("chord"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1151,9 +1196,7 @@ mod tests {
         ];
         for spec in FLAGS {
             assert!(
-                demonstrated
-                    .iter()
-                    .any(|flags| flags.bits() == spec.bit),
+                demonstrated.iter().any(|flags| flags.bits() == spec.bit),
                 "flag {} ({}) is not demonstrated",
                 spec.bit,
                 spec.name

@@ -205,7 +205,11 @@ impl Reading {
     /// The claim, if it counts towards the comparison.
     #[must_use]
     pub fn comparable(&self) -> Option<&str> {
-        if self.reliable { self.claim.says() } else { None }
+        if self.reliable {
+            self.claim.says()
+        } else {
+            None
+        }
     }
 }
 
@@ -393,9 +397,17 @@ mod tests {
     #[test]
     fn a_disagreement_among_three_is_found_wherever_it_sits() {
         for odd in 0..3 {
-            let mut readings = vec![yes(Origin::Terminfo), yes(Origin::Terminal), yes(Origin::Observed)];
+            let mut readings = vec![
+                yes(Origin::Terminfo),
+                yes(Origin::Terminal),
+                yes(Origin::Observed),
+            ];
             readings[odd] = no(readings[odd].origin);
-            assert_eq!(agreement(&readings), Agreement::Disagree, "odd one at {odd}");
+            assert_eq!(
+                agreement(&readings),
+                Agreement::Disagree,
+                "odd one at {odd}"
+            );
         }
     }
 

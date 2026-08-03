@@ -125,7 +125,10 @@ impl Thresholds {
     /// general question of whether the size can be determined.
     #[must_use]
     pub fn is_empty(self) -> bool {
-        self.rows.is_empty() && self.cols.is_empty() && self.width.is_empty() && self.height.is_empty()
+        self.rows.is_empty()
+            && self.cols.is_empty()
+            && self.width.is_empty()
+            && self.height.is_empty()
     }
 
     /// Whether any threshold needs a pixel size, and therefore a round trip on
@@ -362,7 +365,11 @@ mod tests {
             at_most: Some(24),
             exactly: None,
         });
-        assert_eq!(support(thresholds, &known()), Support::Yes, "24 is in 20..=24");
+        assert_eq!(
+            support(thresholds, &known()),
+            Support::Yes,
+            "24 is in 20..=24"
+        );
         for rows_count in [19, 25] {
             let available = Available {
                 rows: Some(rows_count),
@@ -425,7 +432,11 @@ mod tests {
         let outcome = thresholds.evaluate(&cells_only());
         assert_eq!(outcome.support(), Support::No);
         assert_eq!(outcome.unmet, ["cols"]);
-        assert_eq!(outcome.undetermined, ["width"], "but the gap is still reported");
+        assert_eq!(
+            outcome.undetermined,
+            ["width"],
+            "but the gap is still reported"
+        );
     }
 
     #[test]

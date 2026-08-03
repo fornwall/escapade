@@ -21,8 +21,9 @@
 use super::{
     catalog::{Index, Match, apc_key},
     display::{self, HEX_LIMIT, PAYLOAD_LIMIT},
-    names, sgr,
+    names,
     parse::{Decoded, Fields, Flaw, Item, Pending, StringKind, Terminator},
+    sgr,
 };
 use crate::term;
 
@@ -255,11 +256,13 @@ fn describe_string(kind: StringKind, payload: &[u8], terminator: Terminator) -> 
         StringKind::Osc => {
             let fields: Vec<&str> = text.split(';').collect();
             let number = fields.first().copied().unwrap_or_default();
-            description.label = Some(if number.chars().all(|c| c.is_ascii_digit()) && !number.is_empty() {
-                format!("OSC {number}")
-            } else {
-                "OSC".to_owned()
-            });
+            description.label = Some(
+                if number.chars().all(|c| c.is_ascii_digit()) && !number.is_empty() {
+                    format!("OSC {number}")
+                } else {
+                    "OSC".to_owned()
+                },
+            );
             if let Some(meaning) = names::osc(&fields) {
                 description.summary = Some(meaning.summary);
             }
@@ -323,10 +326,7 @@ fn payload_notes(
 fn describe_single_shift(level: u8, byte: u8) -> Description {
     let introducer = if level == 2 { "N" } else { "O" };
     let shifted = char::from(byte);
-    let pieces = vec![
-        introducer.to_owned(),
-        display::escape(&shifted.to_string()),
-    ];
+    let pieces = vec![introducer.to_owned(), display::escape(&shifted.to_string())];
     let mut description = base(display::spell(term::ESC, &pieces));
     description.label = Some(format!("SS{level}"));
     description.summary = Some(format!(
@@ -405,7 +405,9 @@ fn describe_malformed(flaw: Flaw, bytes: &[u8]) -> Description {
         Flaw::EightBitC1(byte) => {
             let name = names::eight_bit_c1(byte);
             if name.is_empty() {
-                format!("byte {byte:#04x}: not valid UTF-8, and a C1 control in an eight-bit stream")
+                format!(
+                    "byte {byte:#04x}: not valid UTF-8, and a C1 control in an eight-bit stream"
+                )
             } else {
                 format!(
                     "byte {byte:#04x}: not valid UTF-8 here, though it is the eight-bit form of \
@@ -529,8 +531,7 @@ mod tests {
 
     #[test]
     fn the_whole_captured_hyperlink_stream_decodes_and_names_itself() {
-        let described =
-            describe_all(b"\x1b]8;;https://example.com\x1b\\click me\x1b]8;;\x1b\\");
+        let described = describe_all(b"\x1b]8;;https://example.com\x1b\\click me\x1b]8;;\x1b\\");
         assert_eq!(described.len(), 3);
         assert!(described[0].prose().contains("start a hyperlink"));
         assert_eq!(described[1].sequence, "\"click me\"");
@@ -549,7 +550,11 @@ mod tests {
         let glyph = one(b"\x1b_25a1;s\x1b\\");
         assert_eq!(glyph.label.as_deref(), Some("APC 25a1"));
         assert_eq!(glyph.features[0].feature_id, "glyph-protocol");
-        assert!(glyph.prose().contains("Glyph Protocol"), "{}", glyph.prose());
+        assert!(
+            glyph.prose().contains("Glyph Protocol"),
+            "{}",
+            glyph.prose()
+        );
     }
 
     #[test]
@@ -616,7 +621,11 @@ mod tests {
     #[test]
     fn an_eight_bit_csi_byte_is_explained_rather_than_obeyed() {
         let described = describe_all(b"\x9b1m");
-        assert!(described[0].prose().contains("CSI"), "{}", described[0].prose());
+        assert!(
+            described[0].prose().contains("CSI"),
+            "{}",
+            described[0].prose()
+        );
         assert!(described[0].prose().contains("Latin-1"));
     }
 
@@ -625,7 +634,9 @@ mod tests {
         let described = one("a\u{202e}b".as_bytes());
         assert_eq!(described.sequence, "\"a\\u{202e}b\"");
         assert!(
-            described.prose().contains("1 character in this run is invisible"),
+            described
+                .prose()
+                .contains("1 character in this run is invisible"),
             "{}",
             described.prose()
         );
@@ -638,7 +649,11 @@ mod tests {
         let described = one(stream.as_bytes());
         assert!(described.sequence.contains('…'), "{}", described.sequence);
         assert!(described.sequence.len() < 200, "{}", described.sequence);
-        assert!(described.prose().contains("501 bytes of payload"), "{}", described.prose());
+        assert!(
+            described.prose().contains("501 bytes of payload"),
+            "{}",
+            described.prose()
+        );
     }
 
     #[test]
@@ -690,7 +705,10 @@ mod tests {
     #[test]
     fn database_names_are_lowercased_but_acronyms_are_not() {
         assert_eq!(phrase("Open a link"), "open a link");
-        assert_eq!(phrase("set determinate progress"), "set determinate progress");
+        assert_eq!(
+            phrase("set determinate progress"),
+            "set determinate progress"
+        );
         assert_eq!(phrase("DECRQM sets the mode"), "DECRQM sets the mode");
         assert_eq!(phrase(""), "");
     }

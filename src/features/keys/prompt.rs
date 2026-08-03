@@ -288,9 +288,10 @@ where
 
         if collected.observations.len() >= ask.want && !said_enough {
             said_enough = true;
-            let line = view
-                .theme()
-                .paint("    that is the shape of it — Return when you are ready", Ink::Muted);
+            let line = view.theme().paint(
+                "    that is the shape of it — Return when you are ready",
+                Ink::Muted,
+            );
             view.write_line(&line)?;
             view.flush_view()?;
         }

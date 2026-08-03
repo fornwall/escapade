@@ -106,10 +106,22 @@ macro_rules! step {
 const STEPS: &[Step] = &[
     step!("anatomy", "One escape code, six keys", step_anatomy),
     step!("scale", "The ladder: s=1 to s=7", step_scale),
-    step!("width", "w=, and the end of the wcwidth argument", step_width),
-    step!("fractions", "Halves and thirds: superscripts", step_fractions),
+    step!(
+        "width",
+        "w=, and the end of the wcwidth argument",
+        step_width
+    ),
+    step!(
+        "fractions",
+        "Halves and thirds: superscripts",
+        step_fractions
+    ),
     step!("alignment", "Nine places to put it", step_alignment),
-    step!("copy-paste", "Select it and paste it — it is text", step_copy_paste),
+    step!(
+        "copy-paste",
+        "Select it and paste it — it is text",
+        step_copy_paste
+    ),
     step!("poster", "Finale: one page, every key", step_poster),
     step!("restore", "Putting the terminal back", step_leave),
 ];
@@ -156,7 +168,12 @@ pub fn list_steps(theme: &Theme) {
 /// # Errors
 ///
 /// Fails if the terminal cannot be set up or written to.
-pub fn run(theme: &Theme, force: bool, only: Option<&str>, start_step: Option<usize>) -> Result<()> {
+pub fn run(
+    theme: &Theme,
+    force: bool,
+    only: Option<&str>,
+    start_step: Option<usize>,
+) -> Result<()> {
     let selection = crate::features::select_steps(&step_names(), only, start_step)?;
 
     let mut term = Term::new()?;
@@ -547,10 +564,7 @@ fn step_anatomy(ctx: &mut Ctx<'_>) -> Result<Flow> {
     let next = ctx.sized(MARGIN + 2, row, Metadata::new().with_scale(2)?, "Hello")?;
     ctx.row = next.saturating_add(1);
 
-    let measured = [
-        ("w=", ctx.width_ok),
-        ("s=", ctx.scale_ok),
-    ];
+    let measured = [("w=", ctx.width_ok), ("s=", ctx.scale_ok)];
     for (key, ok) in measured {
         let (symbol, label, ink) = if ok {
             ("✔", "honoured on this terminal", Ink::Good)
@@ -684,7 +698,8 @@ fn step_width(ctx: &mut Ctx<'_>) -> Result<Flow> {
     .enumerate()
     {
         let row = row.saturating_add(u16::try_from(offset).unwrap_or(0));
-        ctx.term.put(MARGIN + 2, row, &ctx.theme.paint(label, Ink::Muted))?;
+        ctx.term
+            .put(MARGIN + 2, row, &ctx.theme.paint(label, Ink::Muted))?;
         ctx.term.write(&bar)?;
         ctx.term.write(&sequence)?;
         ctx.term.write(&bar)?;
@@ -744,16 +759,20 @@ fn step_fractions(ctx: &mut Ctx<'_>) -> Result<Flow> {
     // E = mc², with a real superscript.
     ctx.term.put(MARGIN + 2, row, "E = mc")?;
     ctx.term.write(&SizedText::new(top, "2")?.sequence())?;
-    ctx.term
-        .write(&ctx.theme.paint("    ← n=1:d=2:v=0, a superscript", Ink::Muted))?;
+    ctx.term.write(
+        &ctx.theme
+            .paint("    ← n=1:d=2:v=0, a superscript", Ink::Muted),
+    )?;
 
     // H₂O, with a real subscript.
     let row = row.saturating_add(2);
     ctx.term.put(MARGIN + 2, row, "H")?;
     ctx.term.write(&SizedText::new(bottom, "2")?.sequence())?;
     ctx.term.write("O")?;
-    ctx.term
-        .write(&ctx.theme.paint("        ← n=1:d=2:v=1, a subscript", Ink::Muted))?;
+    ctx.term.write(
+        &ctx.theme
+            .paint("        ← n=1:d=2:v=1, a subscript", Ink::Muted),
+    )?;
 
     // A whole line of small text.
     let row = row.saturating_add(2);
@@ -762,7 +781,8 @@ fn step_fractions(ctx: &mut Ctx<'_>) -> Result<Flow> {
     let chars: Vec<char> = footnote.chars().collect();
     for pair in chars.chunks(2) {
         let text: String = pair.iter().collect();
-        ctx.term.put(col, row, &SizedText::new(half, &text)?.sequence())?;
+        ctx.term
+            .put(col, row, &SizedText::new(half, &text)?.sequence())?;
         col = col.saturating_add(1);
     }
     ctx.row = row.saturating_add(2);
@@ -971,7 +991,6 @@ fn advance_for(key: &crate::input::KeyEvent) -> Option<Advance> {
 fn step_poster(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.page(6)?;
 
-
     // Fit the headline to the window rather than letting the terminal discard a
     // block that runs off the edge.
     let available = usize::from(ctx.term.cols.saturating_sub(MARGIN * 2));
@@ -1020,7 +1039,8 @@ fn step_poster(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.term.put(
         MARGIN + 2,
         rule_row,
-        &ctx.theme.paint(&"─".repeat(rule_width.min(available)), Ink::Muted),
+        &ctx.theme
+            .paint(&"─".repeat(rule_width.min(available)), Ink::Muted),
     )?;
 
     // Body: ordinary text, on the same screen, in the same grid.
@@ -1081,13 +1101,16 @@ fn step_leave(ctx: &mut Ctx<'_>) -> Result<Flow> {
     println!();
     println!(
         "  {} {}",
-        ctx.theme.paint("escapade textsize --scale 4 'BUILD PASSED'", Ink::Code),
+        ctx.theme
+            .paint("escapade textsize --scale 4 'BUILD PASSED'", Ink::Code),
         ctx.theme.paint("draw something now", Ink::Muted)
     );
     println!(
         "  {} {}",
-        ctx.theme.paint("escapade textsize probe --format debug", Ink::Code),
-        ctx.theme.paint("what this terminal honours, key by key", Ink::Muted)
+        ctx.theme
+            .paint("escapade textsize probe --format debug", Ink::Code),
+        ctx.theme
+            .paint("what this terminal honours, key by key", Ink::Muted)
     );
     println!();
 

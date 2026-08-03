@@ -38,8 +38,7 @@ use crate::{
     features::{
         grapheme::{
             Finding, MODE, ModeState, REFERENCE_SEQUENCE, Reliability, SENTINEL_MODE, barrier,
-            explanation,
-            cluster, json,
+            cluster, explanation, json,
             measure::{self, Comparison, ModeReport, Ruler, Verdict},
             query, sentinel_query,
         },

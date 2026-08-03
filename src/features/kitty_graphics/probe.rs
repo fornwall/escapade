@@ -20,6 +20,16 @@
 //! ```text
 //! APC G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ST   CSI c
 //! ```
+//!
+//! Those bytes go out inside [`crate::term::shielded`], and the payload is left
+//! exactly as the spec writes it rather than trimmed to leak less. A terminal
+//! that does not implement the protocol is supposed to ignore the whole APC
+//! string; macOS Terminal.app consumes the two-byte introducer and prints the
+//! body, so the probe that promises to be silent wrote
+//! `Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA` across the user's prompt while returning the
+//! correct exit status. Shortening the query would only have made a smaller mess:
+//! the shield makes its length irrelevant, so the spec's own bytes are worth more
+//! than the four characters `t=d,` would have saved.
 
 use std::{
     io::{IsTerminal as _, stdin, stdout},
@@ -40,7 +50,7 @@ use crate::{
         },
     },
     input::{InputReader, Reply},
-    term::{CSI, Multiplexer, Term, pretty},
+    term::{CSI, Multiplexer, Term, pretty, shielded, wrapped},
     theme::{Ink, Theme},
 };
 
@@ -196,7 +206,7 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
     term.enable_raw()?;
     input.drain();
 
-    send(term, outcome.multiplexer, &proto::support_query())?;
+    send_query(term, outcome.multiplexer, &proto::support_query())?;
     // The barrier is deliberately *not* wrapped for the multiplexer: we want to
     // know whether the round trip completed, and tmux answers DA1 itself.
     term.write_now(&format!("{CSI}c"))?;
@@ -221,7 +231,9 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
                     break;
                 }
             }
-            Reply::Csi { final_byte: 'c', .. } => {
+            Reply::Csi {
+                final_byte: 'c', ..
+            } => {
                 // The barrier came back. Anything sent before it has already been
                 // processed, so continuing to wait would learn nothing.
                 outcome.answered_barrier = true;
@@ -300,10 +312,15 @@ fn ask(
     image_id: u32,
     replies: &mut Vec<Reply>,
 ) -> bool {
-    for sequence in sequences {
-        if send(term, multiplexer, &sequence.wire()).is_err() {
-            return false;
-        }
+    // A chunked transmission goes out in one write, and so under one shield: the
+    // protocol wants a command's chunks consecutive, and interleaving a cursor
+    // restore between them would be asking for trouble.
+    let queries: String = sequences
+        .iter()
+        .map(|sequence| wrapped(multiplexer, &sequence.wire()))
+        .collect();
+    if term.write_query(&queries).is_err() {
+        return false;
     }
     let deadline = Instant::now() + MEDIA_TIMEOUT;
     loop {
@@ -311,7 +328,8 @@ fn ask(
         if remaining.is_zero() {
             return false;
         }
-        let Ok(Some(reply)) = input.wait_for_reply(remaining, |reply| matches!(reply, Reply::Apc(_)))
+        let Ok(Some(reply)) =
+            input.wait_for_reply(remaining, |reply| matches!(reply, Reply::Apc(_)))
         else {
             return false;
         };
@@ -347,16 +365,20 @@ pub fn compress(payload: &[u8]) -> Vec<u8> {
     miniz_oxide::deflate::compress_to_vec_zlib(payload, 6)
 }
 
-/// Sends a sequence, wrapping it for a multiplexer if one is in the way.
+/// Sends a query, wrapping it for a multiplexer if one is in the way and
+/// shielding the screen either way.
+///
+/// The shield goes *outside* the passthrough wrapper, because it protects the
+/// screen these bytes are being written to. It is [`crate::term::shielded`] that
+/// keeps this invisible on a terminal which prints an APC string instead of
+/// ignoring it — macOS Terminal.app consumes the `ESC _` and then writes
+/// `Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA` where the user's prompt was.
 ///
 /// # Errors
 ///
 /// Fails if stdout does.
-pub fn send(term: &mut Term, multiplexer: Option<Multiplexer>, sequence: &str) -> Result<()> {
-    match multiplexer {
-        Some(multiplexer) => term.write_now(&multiplexer.wrap(sequence)),
-        None => term.write_now(sequence),
-    }
+pub fn send_query(term: &mut Term, multiplexer: Option<Multiplexer>, sequence: &str) -> Result<()> {
+    term.write_query(&wrapped(multiplexer, sequence))
 }
 
 /// Runs a probe from scratch, for `escapade graphics probe`.
@@ -419,10 +441,14 @@ fn json_line(outcome: &ProbeOutcome, support: Support) -> String {
     let multiplexer = outcome
         .multiplexer
         .map_or_else(|| "null".to_owned(), |m| format!("\"{}\"", m.name()));
-    let error = outcome.reply.as_ref().and_then(GraphicsReply::error).map_or_else(
-        || "null".to_owned(),
-        |code| format!("\"{}\"", escape_json(code.as_str())),
-    );
+    let error = outcome
+        .reply
+        .as_ref()
+        .and_then(GraphicsReply::error)
+        .map_or_else(
+            || "null".to_owned(),
+            |code| format!("\"{}\"", escape_json(code.as_str())),
+        );
     format!(
         "{{\"feature\":\"{}\",\"verdict\":\"{}\",\"accepted_test_image\":{},\
          \"error\":{error},\"local_files\":{},\"compression\":{},\
@@ -462,9 +488,11 @@ fn escape_json(text: &str) -> String {
 fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
     let verbose = true;
 
-
     println!();
-    println!("  {}", theme.paint("kitty graphics protocol support", Ink::Title));
+    println!(
+        "  {}",
+        theme.paint("kitty graphics protocol support", Ink::Title)
+    );
     println!();
 
     let term_name = std::env::var("TERM").unwrap_or_else(|_| "unset".to_owned());
@@ -625,7 +653,10 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
             cell_ink
         )
     );
-    println!("    {}", theme.paint(outcome.cell.source.describe(), Ink::Muted));
+    println!(
+        "    {}",
+        theme.paint(outcome.cell.source.describe(), Ink::Muted)
+    );
     if !outcome.cell.source.is_measured() {
         println!(
             "    {}",
@@ -645,7 +676,10 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
             theme.paint("note:", Ink::Warn),
             multiplexer.name()
         );
-        println!("    {}", theme.paint(multiplexer.passthrough_hint(), Ink::Code));
+        println!(
+            "    {}",
+            theme.paint(multiplexer.passthrough_hint(), Ink::Code)
+        );
     }
 
     if verbose {
@@ -666,6 +700,14 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
             theme.paint(&pretty(&format!("{CSI}16t{CSI}14t")), Ink::Code),
             theme.paint("← cell size, then window size", Ink::Muted)
         );
+        println!(
+            "    {}  {}",
+            theme.paint(&pretty(&shielded(" <query> ")), Ink::Code),
+            theme.paint(
+                "← the shield each query goes inside, for terminals that print APC strings",
+                Ink::Muted
+            )
+        );
 
         println!();
         println!("  {}", theme.paint("what came back", Ink::Accent));
@@ -681,14 +723,18 @@ fn debug_report(theme: &Theme, outcome: &ProbeOutcome) {
     println!(
         "  {} {}",
         theme.paint("escapade graphics explain", Ink::Code),
-        theme.paint("for what this protocol is and who implements it", Ink::Muted)
+        theme.paint(
+            "for what this protocol is and who implements it",
+            Ink::Muted
+        )
     );
     println!(
         "  {} {}",
         theme.paint("escapade graphics demo", Ink::Code),
         theme.paint("to watch it work", Ink::Muted)
     );
-    println!();}
+    println!();
+}
 
 /// One-line rendering of a reply, safe to print.
 fn describe_reply(reply: &Reply) -> String {
@@ -769,6 +815,40 @@ mod tests {
         let outcome = ProbeOutcome::default();
         assert_eq!(outcome.cell.source, CellSource::Assumed);
         assert!(!outcome.interactive, "nothing has been checked yet");
+    }
+
+    #[test]
+    fn the_support_query_leaves_no_trace_on_a_terminal_that_prints_apc() {
+        // The reported bug: Terminal.app got the verdict right and printed the
+        // question. The cursor is on the last row, where a wrap would also scroll.
+        use crate::term::{
+            screen::{Screen, Strings},
+            shielded,
+        };
+        let mut screen = Screen::new(80, 24, Strings::Printed);
+        screen.goto(23, 0);
+        let before = screen.text();
+        screen.feed(&shielded(&proto::support_query()));
+        assert_eq!(screen.text(), before, "the query was left on the screen");
+        assert_eq!(screen.cursor(), (23, 0));
+        assert_eq!(screen.scrolled(), 0);
+        assert!(screen.wrap());
+    }
+
+    #[test]
+    fn the_tmux_wrapped_query_leaves_no_trace_either() {
+        // Passthrough doubles every escape and adds a DCS around the lot, so the
+        // leak would be longer still — and the shield goes outside the wrapper.
+        use crate::term::{
+            screen::{Screen, Strings},
+            shielded,
+        };
+        let mut screen = Screen::new(40, 10, Strings::Printed);
+        screen.goto(9, 0);
+        let before = screen.text();
+        screen.feed(&shielded(&Multiplexer::Tmux.wrap(&proto::support_query())));
+        assert_eq!(screen.text(), before);
+        assert_eq!(screen.scrolled(), 0);
     }
 
     #[test]

@@ -41,7 +41,11 @@ pub enum Command {
     GlyphProtocol(FeatureCommand<GlyphAction>),
 
     /// Display real images in the terminal with the kitty graphics protocol
-    #[command(name = "graphics", visible_alias = "kitty-graphics", arg_required_else_help = true)]
+    #[command(
+        name = "graphics",
+        visible_alias = "kitty-graphics",
+        arg_required_else_help = true
+    )]
     Graphics(FeatureCommand<GraphicsAction>),
 
     /// Treat multi-codepoint sequences as one character, the way users see them
@@ -53,7 +57,11 @@ pub enum Command {
     Hyperlink(HyperlinkCommand),
 
     /// Raise a desktop notification from inside the terminal
-    #[command(name = "notification", visible_alias = "notify", arg_required_else_help = true)]
+    #[command(
+        name = "notification",
+        visible_alias = "notify",
+        arg_required_else_help = true
+    )]
     Notification(NotificationCommand),
 
     /// Show progress in the taskbar or tab title, from a script
@@ -61,7 +69,11 @@ pub enum Command {
     Progress(ProgressCommand),
 
     /// Draw text several cells tall that still copies as one line
-    #[command(name = "textsize", visible_alias = "text-sizing", arg_required_else_help = true)]
+    #[command(
+        name = "textsize",
+        visible_alias = "text-sizing",
+        arg_required_else_help = true
+    )]
     Textsize(TextsizeCommand),
 
     /// Ask the terminal what colour it actually is, and watch for changes
@@ -112,13 +124,17 @@ pub enum Command {
 /// icon, the tab title. The whole point is to be driven from a script, so the
 /// primary form is a bare percentage.
 #[derive(Debug, Args)]
-#[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true, after_help = "\
+#[command(
+    subcommand_negates_reqs = true,
+    args_conflicts_with_subcommands = true,
+    after_help = "\
 Examples:
   escapade progress 42
   escapade progress --state error
   escapade progress --clear
   for i in $(seq 0 100); do sleep 0.05; echo $i; done | escapade progress --watch
-  cargo build 2>&1 | grep --line-buffered -o '[0-9]*%' | escapade progress --watch")]
+  cargo build 2>&1 | grep --line-buffered -o '[0-9]*%' | escapade progress --watch"
+)]
 pub struct ProgressCommand {
     #[command(subcommand)]
     pub action: Option<ProgressAction>,
@@ -200,7 +216,9 @@ pub enum ProgressAction {
 /// it really is — unlike figlet-style ASCII art, which copies as the picture it
 /// is made of.
 #[derive(Debug, Args)]
-#[command(args_conflicts_with_subcommands = true, after_help = "\
+#[command(
+    args_conflicts_with_subcommands = true,
+    after_help = "\
 Support for this protocol is per-key rather than all-or-nothing: some terminals
 implement --width but not --scale. `probe` reports each separately, and a request
 a terminal cannot honour degrades to ordinary text rather than failing.
@@ -209,7 +227,8 @@ Examples:
   escapade textsize --scale 4 'BUILD PASSED'
   escapade textsize --width 2 'wide'
   escapade textsize --scale 2 --fraction 1/2 'half again'
-  escapade textsize --scale 3 --valign bottom 'sitting low'")]
+  escapade textsize --scale 3 --valign bottom 'sitting low'"
+)]
 pub struct TextsizeCommand {
     #[command(subcommand)]
     pub action: Option<TextsizeAction>,
@@ -586,7 +605,9 @@ pub struct StyleAttrs {
 /// Every SGR text attribute in one place, because they compose into one sequence.
 /// Anything else would force `escapade underline "$(escapade bold text)"`.
 #[derive(Debug, Args)]
-#[command(args_conflicts_with_subcommands = true, after_help = "\
+#[command(
+    args_conflicts_with_subcommands = true,
+    after_help = "\
 Text comes from the arguments, or from standard input when there are none. A lone
 `-` reads standard input even from a terminal.
 
@@ -602,7 +623,8 @@ Examples:
   escapade style --strikethrough --dim 'done'
   cargo build 2>&1 | escapade style --italic
   escapade style --underline dotted --underline-color '#5f87ff' 'note'
-  escapade style probe --bold --italic && echo 'both work here'")]
+  escapade style probe --bold --italic && echo 'both work here'"
+)]
 pub struct StyleCommand {
     #[command(subcommand)]
     pub action: Option<StyleAction>,
@@ -693,12 +715,15 @@ Exit status:
 /// Bare, it reports the size. Under `probe`, it tests the size against
 /// thresholds and answers through the exit status.
 #[derive(Debug, Args)]
-#[command(args_conflicts_with_subcommands = true, after_help = "\
+#[command(
+    args_conflicts_with_subcommands = true,
+    after_help = "\
 Examples:
   escapade dimensions
   escapade dimensions --format json
   escapade dimensions probe --rows-at-least 20 --cols-at-most 40
-  escapade dimensions probe --cols-exactly 80 && echo 'classic'")]
+  escapade dimensions probe --cols-exactly 80 && echo 'classic'"
+)]
 pub struct DimensionsCommand {
     #[command(subcommand)]
     pub action: Option<DimensionsAction>,
@@ -786,11 +811,14 @@ Exit status:
 /// showed disappears and the prompt lands near the top of an otherwise empty
 /// screen. Unscroll pulls those lines back down.
 #[derive(Debug, Args)]
-#[command(args_conflicts_with_subcommands = true, after_help = "\
+#[command(
+    args_conflicts_with_subcommands = true,
+    after_help = "\
 Examples:
   escapade unscroll            # pull back a screenful
   escapade unscroll 5          # pull back five lines
-  escapade unscroll --dry-run")]
+  escapade unscroll --dry-run"
+)]
 pub struct UnscrollCommand {
     #[command(subcommand)]
     pub action: Option<UnscrollAction>,
@@ -1039,8 +1067,10 @@ pub struct FeatureCommand<A: Subcommand> {
 pub enum GlyphAction {
     /// Explain the protocol: what it does, its escape sequences, who uses it,
     /// and which terminals support it
-    #[command(after_help = "The support matrix lives in data/features/glyph-protocol.toml — \
-                            corrections welcome.")]
+    #[command(
+        after_help = "The support matrix lives in data/features/glyph-protocol.toml — \
+                            corrections welcome."
+    )]
     Explain {
         /// Skip the support matrix
         #[arg(long)]
@@ -1115,8 +1145,10 @@ Examples:
 pub enum GraphicsAction {
     /// Explain the protocol: transmission, placement, animation, and which
     /// terminals support it
-    #[command(after_help = "The support matrix lives in data/features/kitty-graphics.toml — \
-                            corrections welcome.")]
+    #[command(
+        after_help = "The support matrix lives in data/features/kitty-graphics.toml — \
+                            corrections welcome."
+    )]
     Explain {
         /// Skip the support matrix
         #[arg(long)]
@@ -1484,8 +1516,10 @@ pub enum Urgency {
 pub enum NotificationAction {
     /// Explain terminal notifications: the competing sequences, and what each
     /// one can express
-    #[command(after_help = "The support matrix lives in data/features/notifications.toml — \
-                            corrections welcome.")]
+    #[command(
+        after_help = "The support matrix lives in data/features/notifications.toml — \
+                            corrections welcome."
+    )]
     Explain {
         /// Skip the support matrix
         #[arg(long)]
@@ -1524,8 +1558,10 @@ pub enum NotificationAction {
 #[derive(Debug, Subcommand)]
 pub enum HyperlinkAction {
     /// Explain OSC 8: the sequence, its parameters, and which terminals support it
-    #[command(after_help = "The support matrix lives in data/features/hyperlinks.toml — \
-                            corrections welcome.")]
+    #[command(
+        after_help = "The support matrix lives in data/features/hyperlinks.toml — \
+                            corrections welcome."
+    )]
     Explain {
         /// Skip the support matrix
         #[arg(long)]
@@ -1565,8 +1601,10 @@ pub enum HyperlinkAction {
 pub enum GraphemeAction {
     /// Explain grapheme clustering: why terminals get it wrong, what mode 2027
     /// changes, and which terminals implement it
-    #[command(after_help = "The support matrix lives in data/features/grapheme-clustering.toml — \
-                            corrections welcome.")]
+    #[command(
+        after_help = "The support matrix lives in data/features/grapheme-clustering.toml — \
+                            corrections welcome."
+    )]
     Explain {
         /// Skip the support matrix
         #[arg(long)]

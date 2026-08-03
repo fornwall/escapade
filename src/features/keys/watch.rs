@@ -191,7 +191,10 @@ pub fn run(theme: &Theme, wanted: Option<Flags>, format: Option<ProbeFormat>) ->
         if json {
             emit(raw, &json_line(&bytes, &event));
         } else {
-            emit(raw, &format!("{}\n", event_line(theme, &event, &bytes, verbose)));
+            emit(
+                raw,
+                &format!("{}\n", event_line(theme, &event, &bytes, verbose)),
+            );
         }
         let _ = stdout().flush();
 
@@ -394,7 +397,10 @@ mod tests {
         for (bytes, event) in replay(b"\r\r") {
             legacy.record(&event, &bytes);
         }
-        assert_eq!(legacy.summary(), vec![("Enter".to_owned(), 1, "CR".to_owned())]);
+        assert_eq!(
+            legacy.summary(),
+            vec![("Enter".to_owned(), 1, "CR".to_owned())]
+        );
 
         // With the disambiguate flag the second press is a different sequence,
         // and the tally says so.
@@ -469,6 +475,11 @@ mod tests {
     fn a_summary_of_nothing_does_not_panic() {
         let theme = Theme::plain();
         footer(&theme, &Tally::default(), None, None);
-        footer(&theme, &Tally::default(), Some(Flags::ALL), Some(Flags::ALL));
+        footer(
+            &theme,
+            &Tally::default(),
+            Some(Flags::ALL),
+            Some(Flags::ALL),
+        );
     }
 }

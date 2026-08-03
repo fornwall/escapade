@@ -237,16 +237,14 @@ impl Outline {
             &mut fields,
             "xCoordinates",
             &x_bytes,
-            "x deltas from the previous point, first relative to the origin"
-                .to_owned(),
+            "x deltas from the previous point, first relative to the origin".to_owned(),
         );
         push_field(
             &mut bytes,
             &mut fields,
             "yCoordinates",
             &y_bytes,
-            "y deltas, same encoding — deltas are why outlines compress so well"
-                .to_owned(),
+            "y deltas, same encoding — deltas are why outlines compress so well".to_owned(),
         );
 
         (bytes, fields)
@@ -504,15 +502,16 @@ mod tests {
         assert_eq!(flags.bytes[1] & FLAG_X_SHORT, FLAG_X_SHORT);
         assert_eq!(flags.bytes[1] & FLAG_X_SAME_OR_POSITIVE, 0);
         let x = fields.iter().find(|f| f.label == "xCoordinates").unwrap();
-        assert_eq!(x.bytes, vec![200, 100], "magnitudes, with sign in the flags");
+        assert_eq!(
+            x.bytes,
+            vec![200, 100],
+            "magnitudes, with sign in the flags"
+        );
     }
 
     #[test]
     fn fields_account_for_every_encoded_byte() {
-        let outline = Pen::new()
-            .move_to(0, 0)
-            .quad_to(500, 900, 1000, 0)
-            .build();
+        let outline = Pen::new().move_to(0, 0).quad_to(500, 900, 1000, 0).build();
         let (bytes, fields) = outline.encode_with_fields();
         let from_fields: Vec<u8> = fields.iter().flat_map(|f| f.bytes.clone()).collect();
         assert_eq!(
@@ -523,10 +522,7 @@ mod tests {
 
     #[test]
     fn quad_to_adds_an_off_curve_control_point() {
-        let outline = Pen::new()
-            .move_to(0, 0)
-            .quad_to(500, 900, 1000, 0)
-            .build();
+        let outline = Pen::new().move_to(0, 0).quad_to(500, 900, 1000, 0).build();
         assert_eq!(outline.point_count(), 3);
         let on_curve: Vec<bool> = outline.points().map(|p| p.on_curve).collect();
         assert_eq!(on_curve, vec![true, false, true]);

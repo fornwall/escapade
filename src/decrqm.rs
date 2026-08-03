@@ -315,7 +315,10 @@ mod tests {
             "the sentinel's mode number must survive parsing"
         );
         // Some terminals pad with spaces.
-        assert_eq!(parse_report("? 2026 ; 2 ", 'y'), Some((2026, ModeState::Reset)));
+        assert_eq!(
+            parse_report("? 2026 ; 2 ", 'y'),
+            Some((2026, ModeState::Reset))
+        );
     }
 
     #[test]
@@ -328,7 +331,11 @@ mod tests {
             (4, ModeState::PermanentlyReset),
         ] {
             let params = format!("?2027;{value}");
-            assert_eq!(parse_report(&params, 'y'), Some((2027, expected)), "{params}");
+            assert_eq!(
+                parse_report(&params, 'y'),
+                Some((2027, expected)),
+                "{params}"
+            );
         }
     }
 
@@ -363,7 +370,10 @@ mod tests {
         );
         assert_eq!(state_for(&control, 2027), None);
         // Anything that is not a CSI reply carries no report.
-        assert_eq!(state_for(&Reply::Osc("11;rgb:0/0/0".to_owned()), 2027), None);
+        assert_eq!(
+            state_for(&Reply::Osc("11;rgb:0/0/0".to_owned()), 2027),
+            None
+        );
     }
 
     #[test]

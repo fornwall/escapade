@@ -141,7 +141,10 @@ fn step_names() -> Vec<&'static str> {
 /// Prints the step list for `--list`.
 pub fn list_steps(theme: &Theme) {
     println!();
-    println!("  {}", theme.paint("Desktop notifications demo", Ink::Title));
+    println!(
+        "  {}",
+        theme.paint("Desktop notifications demo", Ink::Title)
+    );
     println!();
     let width = STEPS.iter().map(|step| step.name.len()).max().unwrap_or(0);
     for (index, step) in STEPS.iter().enumerate() {
@@ -310,7 +313,10 @@ fn refuse(theme: &Theme, outcome: &ProbeOutcome) {
         ) {
             println!("  {}", theme.paint(&line, Ink::Muted));
         }
-        println!("  {}", theme.paint(multiplexer.passthrough_hint(), Ink::Code));
+        println!(
+            "  {}",
+            theme.paint(multiplexer.passthrough_hint(), Ink::Code)
+        );
     }
 
     if !outcome.interactive {
@@ -494,9 +500,7 @@ impl Ctx<'_> {
         self.indented(2, &self.theme.paint(&sent, Ink::Good))?;
         self.note(&expected)?;
         for note in &built.lost {
-            let painted = self
-                .theme
-                .paint(&format!("… but {note}"), Ink::Warn);
+            let painted = self.theme.paint(&format!("… but {note}"), Ink::Warn);
             self.indented(2, &painted)?;
         }
         self.caveat(protocol)?;
@@ -582,7 +586,10 @@ fn step_overview(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.indented(
         2,
         &ctx.theme.paint(
-            &format!("--protocol auto here resolves to {}", choice.protocol.label()),
+            &format!(
+                "--protocol auto here resolves to {}",
+                choice.protocol.label()
+            ),
             Ink::Accent,
         ),
     )?;
@@ -636,7 +643,10 @@ fn step_osc9(ctx: &mut Ctx<'_>) -> Result<Flow> {
                  field is: Ghostty documents it as the title, iTerm2 as the message, Contour \
                  renders it as the body under a title of \"ConEmu\".",
             ),
-            ("ST", "String Terminator, ESC \\. A lone BEL is also accepted."),
+            (
+                "ST",
+                "String Terminator, ESC \\. A lone BEL is also accepted.",
+            ),
         ],
     )?;
     ctx.blank();
@@ -1011,11 +1021,16 @@ fn step_build(ctx: &mut Ctx<'_>) -> Result<Flow> {
         ctx.term.put(MARGIN + 2, bar_row, &painted)?;
         ctx.term.clear_to_eol()?;
 
-        let step = usize::try_from(u64::try_from(crates.len()).unwrap_or(1) * elapsed / BUILD_MILLIS)
-            .unwrap_or(0)
-            .min(crates.len() - 1);
+        let step =
+            usize::try_from(u64::try_from(crates.len()).unwrap_or(1) * elapsed / BUILD_MILLIS)
+                .unwrap_or(0)
+                .min(crates.len() - 1);
         let status = if done {
-            format!("Finished in {}.{}s", BUILD_MILLIS / 1000, BUILD_MILLIS % 1000 / 100)
+            format!(
+                "Finished in {}.{}s",
+                BUILD_MILLIS / 1000,
+                BUILD_MILLIS % 1000 / 100
+            )
         } else {
             format!("Compiling {}", crates[step])
         };
@@ -1071,10 +1086,7 @@ fn step_leave(ctx: &mut Ctx<'_>) -> Result<Flow> {
     )?;
     ctx.blank();
     ctx.send(&osc99_close(DEMO_ID))?;
-    ctx.indented(
-        2,
-        &ctx.theme.paint("✔ closed", Ink::Good),
-    )?;
+    ctx.indented(2, &ctx.theme.paint("✔ closed", Ink::Good))?;
     ctx.blank();
 
     ctx.sequence(
@@ -1202,7 +1214,10 @@ mod tests {
         let names = step_names();
         let selection = crate::features::select_steps(&names, Some("osc777"), None).unwrap();
         assert_eq!(STEPS[selection.start].name, "osc777");
-        assert!(selection.single, "--only must not run on into the next step");
+        assert!(
+            selection.single,
+            "--only must not run on into the next step"
+        );
 
         // `osc9` and `osc99` share a prefix, so the exact match has to win over
         // the ambiguous-prefix error.
@@ -1310,10 +1325,7 @@ mod tests {
         assert_eq!(request.id.as_deref(), Some(DEMO_ID));
         let built = build(Protocol::Osc99, &request);
         for sequence in &built.sequences {
-            assert!(
-                sequence.contains(&format!("i={DEMO_ID}")),
-                "{sequence:?}"
-            );
+            assert!(sequence.contains(&format!("i={DEMO_ID}")), "{sequence:?}");
         }
     }
 

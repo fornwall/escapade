@@ -244,8 +244,7 @@ impl Catalogue {
                         EMBEDDED_CHECKS.to_owned()
                     }
                     Err(error) => {
-                        return Err(error)
-                            .with_context(|| format!("reading {}", path.display()));
+                        return Err(error).with_context(|| format!("reading {}", path.display()));
                     }
                 }
             }
@@ -305,8 +304,11 @@ fn convert(raw: &RawCheck) -> Result<Check> {
     {
         bail!("checks.toml: check id `{id}` is not lowercase kebab-case");
     }
-    for (field, value) in [("name", &raw.name), ("question", &raw.question), ("notes", &raw.notes)]
-    {
+    for (field, value) in [
+        ("name", &raw.name),
+        ("question", &raw.question),
+        ("notes", &raw.notes),
+    ] {
         if value.trim().is_empty() {
             bail!("checks.toml: check `{id}` has an empty `{field}`");
         }
@@ -388,7 +390,10 @@ mod tests {
     #[test]
     fn the_embedded_catalogue_loads_and_validates() {
         let catalogue = Catalogue::load().unwrap();
-        assert!(catalogue.checks().len() >= 8, "the brief asks for a real set");
+        assert!(
+            catalogue.checks().len() >= 8,
+            "the brief asks for a real set"
+        );
         let ids = catalogue.ids();
         for wanted in [
             "truecolor",
@@ -429,7 +434,10 @@ mod tests {
     fn the_catalogue_never_embeds_an_invisible_character() {
         let invisible = |ch: char| {
             matches!(ch as u32, 0xE000..=0xF8FF | 0xF_0000..=0xF_FFFD | 0x10_0000..=0x10_FFFD)
-                || matches!(ch, '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}' | '\u{00ad}')
+                || matches!(
+                    ch,
+                    '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}' | '\u{00ad}'
+                )
         };
         assert_eq!(EMBEDDED_CHECKS.chars().find(|&ch| invisible(ch)), None);
     }
@@ -438,16 +446,25 @@ mod tests {
     fn cap_specs_parse_presence_and_thresholds() {
         assert_eq!(
             CapSpec::parse("RGB").unwrap(),
-            CapSpec { name: "RGB".to_owned(), min: None }
+            CapSpec {
+                name: "RGB".to_owned(),
+                min: None
+            }
         );
         assert_eq!(
             CapSpec::parse("colors>=16777216").unwrap(),
-            CapSpec { name: "colors".to_owned(), min: Some(16_777_216) }
+            CapSpec {
+                name: "colors".to_owned(),
+                min: Some(16_777_216)
+            }
         );
         // Whitespace is tolerated on both sides of the operator.
         assert_eq!(
             CapSpec::parse(" Co >= 256 ").unwrap(),
-            CapSpec { name: "Co".to_owned(), min: Some(256) }
+            CapSpec {
+                name: "Co".to_owned(),
+                min: Some(256)
+            }
         );
     }
 
@@ -506,7 +523,10 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(error.contains("telepathy"), "{error}");
-        assert!(error.contains("sgr-readback"), "should list the real names: {error}");
+        assert!(
+            error.contains("sgr-readback"),
+            "should list the real names: {error}"
+        );
     }
 
     #[test]
@@ -546,7 +566,9 @@ mod tests {
     fn duplicate_ids_fail_loudly() {
         let one = "[[check]]\nid = \"x\"\nname = \"X\"\nquestion = \"?\"\nobserved = \"none\"\n\
                    terminfo = [\"Ms\"]\nnotes = \"n\"\n";
-        let error = Catalogue::parse(&format!("{one}{one}")).unwrap_err().to_string();
+        let error = Catalogue::parse(&format!("{one}{one}"))
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("duplicate"), "{error}");
     }
 

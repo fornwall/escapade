@@ -32,7 +32,7 @@
 //! * [`checks`] — the catalogue, `data/checks.toml`, and its loader.
 //! * [`terminfo`] — source one: `infocmp -x -1`, and its parser.
 //! * [`tcap`] — source two, part one: XTGETTCAP encoding and reply grammar.
-//! * [`modes`] — source two, part two: DECRQM, DECRPM, and the sentinel.
+//! * [`crate::decrqm`] — source two, part two: DECRQM, DECRPM, and the sentinel.
 //! * [`observe`] — source three: the probes that measure, each split into a query
 //!   builder and a pure interpreter.
 //! * [`identity`] — normalising the many names a terminal goes by.
@@ -50,11 +50,7 @@ pub mod tcap;
 pub mod terminfo;
 pub mod verdict;
 
-use std::{
-    collections::BTreeMap,
-    process::ExitCode,
-    time::Duration,
-};
+use std::{collections::BTreeMap, process::ExitCode, time::Duration};
 
 use anyhow::{Context as _, Result};
 
@@ -337,11 +333,7 @@ fn diagnose<'a>(command: &DoctorCommand, selected: &[&'a Check]) -> Diagnosis<'a
 }
 
 /// Sends every query the selected checks need, one round per source.
-fn interrogate(
-    session: &mut Session,
-    selected: &[&Check],
-    answers: &mut Answers,
-) -> Result<()> {
+fn interrogate(session: &mut Session, selected: &[&Check], answers: &mut Answers) -> Result<()> {
     // Round one: XTGETTCAP, one query per name behind a single barrier.
     let names = tcap_names(selected);
     if !names.is_empty() {
@@ -432,7 +424,10 @@ fn decrqm_modes(selected: &[&Check]) -> Vec<u32> {
 /// names still waiting for an answer — which is correct, and is the only reading
 /// available without one round trip per name.
 #[must_use]
-pub fn collect_tcap(queried: &[String], replies: &[crate::input::Reply]) -> BTreeMap<String, TcapAnswer> {
+pub fn collect_tcap(
+    queried: &[String],
+    replies: &[crate::input::Reply],
+) -> BTreeMap<String, TcapAnswer> {
     let mut answers: BTreeMap<String, TcapAnswer> = BTreeMap::new();
     let mut anonymous_failures = 0usize;
 
@@ -591,12 +586,13 @@ fn read_terminal(check: &Check, answers: &Answers) -> Reading {
                 if check.kind == CheckKind::Identity {
                     let raw = value.clone().unwrap_or_default();
                     return match identity::family(&raw) {
-                        Some(family) => {
-                            Reading::new(origin, Claim::value(family)).with_raw(raw)
-                        }
+                        Some(family) => Reading::new(origin, Claim::value(family)).with_raw(raw),
                         None => Reading::silent(
                             origin,
-                            format!("`{}` is not a name this recognises", observe::printable(&raw)),
+                            format!(
+                                "`{}` is not a name this recognises",
+                                observe::printable(&raw)
+                            ),
                         )
                         .with_raw(observe::printable(&raw)),
                     };
@@ -613,7 +609,10 @@ fn read_terminal(check: &Check, answers: &Answers) -> Reading {
                 // Present but below the threshold: an explicit answer, and a no.
                 return Reading::new(origin, Claim::from_support(Support::No))
                     .with_raw(render_cap(&spec.name, value.as_deref()))
-                    .with_detail(format!("the terminal reported {}, which is below the threshold this check needs", render_cap(&spec.name, value.as_deref())));
+                    .with_detail(format!(
+                        "the terminal reported {}, which is below the threshold this check needs",
+                        render_cap(&spec.name, value.as_deref())
+                    ));
             }
             Some(TcapAnswer::Absent) => disowned.push(spec.name.clone()),
             None => {}
@@ -690,11 +689,7 @@ fn read_observed(check: &Check, answers: &Answers, multiplexer: Option<Multiplex
 }
 
 /// The DECRQM arm of [`read_observed`].
-fn read_decrqm(
-    mode: Option<u32>,
-    answers: &Answers,
-    multiplexer: Option<Multiplexer>,
-) -> Reading {
+fn read_decrqm(mode: Option<u32>, answers: &Answers, multiplexer: Option<Multiplexer>) -> Reading {
     let origin = Origin::Observed;
     let Some(mode) = mode else {
         return Reading::silent(origin, "no mode to ask about");
@@ -801,9 +796,7 @@ fn read_identity(identity: Option<&observe::Identity>) -> Reading {
                 "XTVERSION answered `{}`, which is not a name this recognises",
                 observe::printable(version)
             ),
-            None => {
-                "XTVERSION was not answered, so the terminal did not name itself".to_owned()
-            }
+            None => "XTVERSION was not answered, so the terminal did not name itself".to_owned(),
         };
         let reading = Reading::silent(origin, why);
         return match detail {
@@ -840,7 +833,10 @@ fn read_environment(check: &Check) -> Reading {
                 Some(family) => Reading::new(origin, Claim::value(family)).with_raw(raw),
                 None => Reading::silent(
                     origin,
-                    format!("`{}` is not a name this recognises", observe::printable(&value)),
+                    format!(
+                        "`{}` is not a name this recognises",
+                        observe::printable(&value)
+                    ),
                 )
                 .with_raw(raw),
             };
@@ -866,8 +862,7 @@ fn read_environment(check: &Check) -> Reading {
 /// text it is, made safe to print first.
 #[must_use]
 pub fn normalise_value(text: &str) -> String {
-    observe::canonical_erase(text)
-        .map_or_else(|| observe::printable(text.trim()), str::to_owned)
+    observe::canonical_erase(text).map_or_else(|| observe::printable(text.trim()), str::to_owned)
 }
 
 /// `RGB`, `colors=0x100` — one capability and its value, for a raw column.
@@ -940,7 +935,11 @@ mod tests {
 
     fn row_with(check: &Check, readings: Vec<Reading>) -> Row<'_> {
         let agreement = agreement(&readings);
-        Row { check, readings, agreement }
+        Row {
+            check,
+            readings,
+            agreement,
+        }
     }
 
     // -- exit codes ----------------------------------------------------------
@@ -960,7 +959,10 @@ mod tests {
         );
         let diagnosis = diagnosis(vec![row], false);
         assert_eq!(diagnosis.disagreements(), 1);
-        assert_eq!(format!("{:?}", diagnosis.exit_code()), format!("{:?}", ExitCode::from(2)));
+        assert_eq!(
+            format!("{:?}", diagnosis.exit_code()),
+            format!("{:?}", ExitCode::from(2))
+        );
         assert!(!diagnosis.probed());
     }
 
@@ -975,7 +977,10 @@ mod tests {
             ],
         );
         let diagnosis = diagnosis(vec![row], true);
-        assert_eq!(format!("{:?}", diagnosis.exit_code()), format!("{:?}", ExitCode::from(1)));
+        assert_eq!(
+            format!("{:?}", diagnosis.exit_code()),
+            format!("{:?}", ExitCode::from(1))
+        );
     }
 
     #[test]
@@ -1071,7 +1076,10 @@ mod tests {
         );
 
         let bs = entry("foo|Foo,\n\tkbs=^H,\n");
-        assert_eq!(read_terminfo(&check("backspace"), &bs).claim.says(), Some("^H"));
+        assert_eq!(
+            read_terminfo(&check("backspace"), &bs).claim.says(),
+            Some("^H")
+        );
     }
 
     #[test]
@@ -1239,7 +1247,10 @@ mod tests {
         let replies = vec![
             Reply::Dcs("1$r0;38;2;1;2;3m".to_owned()),
             Reply::Dcs(">|kitty 0.35.2".to_owned()),
-            Reply::Csi { params: "?62;4".to_owned(), final_byte: 'c' },
+            Reply::Csi {
+                params: "?62;4".to_owned(),
+                final_byte: 'c',
+            },
         ];
         assert!(collect_tcap(&queried, &replies).is_empty());
     }
@@ -1253,7 +1264,10 @@ mod tests {
             ..Answers::default()
         };
         answers.modes.insert(2004, ModeState::Reset);
-        answers.sentinel = Sentinel { state: None, answered_barrier: true };
+        answers.sentinel = Sentinel {
+            state: None,
+            answered_barrier: true,
+        };
         let reading = read_observed(&check("bracketed-paste"), &answers, None);
         assert_eq!(reading.claim.says(), Some("yes"));
         assert!(reading.reliable);
@@ -1298,7 +1312,10 @@ mod tests {
     fn silent_decrqm_behind_an_answered_barrier_names_the_konsole_case() {
         let answers = Answers {
             decrqm_barrier: true,
-            sentinel: Sentinel { state: None, answered_barrier: true },
+            sentinel: Sentinel {
+                state: None,
+                answered_barrier: true,
+            },
             ..Answers::default()
         };
         let reading = read_observed(&check("synchronized-output"), &answers, None);
@@ -1314,7 +1331,10 @@ mod tests {
         // about what is beyond it.
         let answers = Answers {
             decrqm_barrier: true,
-            sentinel: Sentinel { state: None, answered_barrier: true },
+            sentinel: Sentinel {
+                state: None,
+                answered_barrier: true,
+            },
             ..Answers::default()
         };
         let reading = read_observed(
@@ -1323,7 +1343,12 @@ mod tests {
             Some(Multiplexer::Tmux),
         );
         assert_eq!(reading.claim, Claim::Silent);
-        assert!(!reading.detail.unwrap().contains("does not implement DECRQM"));
+        assert!(
+            !reading
+                .detail
+                .unwrap()
+                .contains("does not implement DECRQM")
+        );
     }
 
     #[test]
@@ -1481,7 +1506,10 @@ mod tests {
     #[test]
     fn only_is_case_insensitive_and_exact_matches_win() {
         let catalogue = catalogue();
-        assert_eq!(select(&catalogue, Some("IDENTITY")).unwrap()[0].id, "identity");
+        assert_eq!(
+            select(&catalogue, Some("IDENTITY")).unwrap()[0].id,
+            "identity"
+        );
         assert_eq!(select(&catalogue, Some("mouse")).unwrap()[0].id, "mouse");
     }
 
@@ -1513,7 +1541,11 @@ mod tests {
             let row = build_row(check, &terminfo::Source::NoInfocmp, &answers, None);
             assert_eq!(row.readings.len(), 4);
             for origin in Origin::ALL {
-                assert!(row.reading(origin).is_some(), "{} missing {origin:?}", check.id);
+                assert!(
+                    row.reading(origin).is_some(),
+                    "{} missing {origin:?}",
+                    check.id
+                );
             }
             assert_ne!(
                 row.agreement,

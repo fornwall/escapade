@@ -143,7 +143,11 @@ fn copy(theme: &Theme, text: &[String], selection: Selection, dry_run: bool) -> 
     // Everything explanatory goes to stderr, so a `--dry-run` piped into a file
     // contains the sequence and nothing else.
     let mut err = std::io::stderr();
-    for note in sequence::hazards(&data, sequence.len(), multiplexer == Some(Multiplexer::Tmux)) {
+    for note in sequence::hazards(
+        &data,
+        sequence.len(),
+        multiplexer == Some(Multiplexer::Tmux),
+    ) {
         let _ = writeln!(
             err,
             "{} {}",
@@ -224,7 +228,10 @@ fn print_dry_run(
     println!("  {}", theme.paint(&pretty(sequence), Ink::Code));
     println!();
     for (label, value) in [
-        ("selection", format!("{} — {}", selection.label(), selection.pasted_with())),
+        (
+            "selection",
+            format!("{} — {}", selection.label(), selection.pasted_with()),
+        ),
         (
             "payload",
             format!(
@@ -378,7 +385,10 @@ mod tests {
         let catalog = Catalog::load().unwrap();
         let feature = catalog.feature(FEATURE_ID).unwrap();
         assert!(feature.summary.len() > 400, "the summary is a placeholder");
-        assert!(feature.security.is_some(), "this feature is mostly security");
+        assert!(
+            feature.security.is_some(),
+            "this feature is mostly security"
+        );
         assert!(feature.how_it_works.is_some());
         assert!(!feature.sequence.is_empty());
         assert!(!feature.support.is_empty());
@@ -423,5 +433,4 @@ mod tests {
         // Zellij handles it itself rather than forwarding, which is a third one.
         assert!(multiplexer_note(Multiplexer::Zellij).contains("itself"));
     }
-
 }

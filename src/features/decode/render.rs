@@ -72,7 +72,9 @@ pub fn item(
         writeln!(out, "{indent}{}", theme.paint(&hex, Ink::Muted))?;
     }
 
-    if options.unicode && let Item::Text(text) = &decoded.item {
+    if options.unicode
+        && let Item::Text(text) = &decoded.item
+    {
         annotation(out, theme, &indent, text)?;
     }
     Ok(())
@@ -317,7 +319,10 @@ mod tests {
                 ..options()
             },
         );
-        assert!(rendered.contains("12 codepoints in 8 grapheme clusters"), "{rendered}");
+        assert!(
+            rendered.contains("12 codepoints in 8 grapheme clusters"),
+            "{rendered}"
+        );
         assert!(rendered.contains("cluster \""), "{rendered}");
         assert!(rendered.contains("U+1F468"), "{rendered}");
         assert!(rendered.contains("Zero Width Joiner"), "{rendered}");

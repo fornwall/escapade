@@ -443,11 +443,21 @@ mod tests {
     fn every_width_spells_the_same_colour() {
         // The property that makes the scaling right rather than merely plausible:
         // full red is full red however many digits it is written with.
-        for spec in ["rgb:f/0/0", "rgb:ff/00/00", "rgb:fff/000/000", "rgb:ffff/0000/0000"] {
+        for spec in [
+            "rgb:f/0/0",
+            "rgb:ff/00/00",
+            "rgb:fff/000/000",
+            "rgb:ffff/0000/0000",
+        ] {
             assert_eq!(hex_of(spec), "#ff0000", "{spec}");
             assert_eq!(parse_spec(spec).unwrap().r, u16::MAX, "{spec}");
         }
-        for spec in ["rgb:f/f/f", "rgb:ff/ff/ff", "rgb:fff/fff/fff", "rgb:ffff/ffff/ffff"] {
+        for spec in [
+            "rgb:f/f/f",
+            "rgb:ff/ff/ff",
+            "rgb:fff/fff/fff",
+            "rgb:ffff/ffff/ffff",
+        ] {
             assert_eq!(hex_of(spec), "#ffffff", "{spec}");
         }
     }
@@ -471,7 +481,10 @@ mod tests {
     fn case_is_insignificant() {
         assert_eq!(hex_of("RGB:FF/00/AB"), "#ff00ab");
         assert_eq!(hex_of("rgb:Ff/0a/Bc"), "#ff0abc");
-        assert_eq!(parse_spec("#AABBCC").unwrap(), parse_spec("#aabbcc").unwrap());
+        assert_eq!(
+            parse_spec("#AABBCC").unwrap(),
+            parse_spec("#aabbcc").unwrap()
+        );
     }
 
     #[test]
@@ -507,8 +520,14 @@ mod tests {
 
     #[test]
     fn the_sharp_form_accepts_all_four_widths() {
-        assert_eq!(parse_spec("#3a7").unwrap(), Rgb::new(0x3000, 0xa000, 0x7000));
-        assert_eq!(parse_spec("#1a2b3c").unwrap(), Rgb::new(0x1a00, 0x2b00, 0x3c00));
+        assert_eq!(
+            parse_spec("#3a7").unwrap(),
+            Rgb::new(0x3000, 0xa000, 0x7000)
+        );
+        assert_eq!(
+            parse_spec("#1a2b3c").unwrap(),
+            Rgb::new(0x1a00, 0x2b00, 0x3c00)
+        );
         assert_eq!(
             parse_spec("#123456789").unwrap(),
             Rgb::new(0x1230, 0x4560, 0x7890)
@@ -518,12 +537,18 @@ mod tests {
             Rgb::new(0x1234, 0x5678, 0x9abc)
         );
         // The example from XParseColor(3) itself.
-        assert_eq!(parse_spec("#3a7").unwrap(), parse_spec("#3000a0007000").unwrap());
+        assert_eq!(
+            parse_spec("#3a7").unwrap(),
+            parse_spec("#3000a0007000").unwrap()
+        );
     }
 
     #[test]
     fn eight_bit_values_widen_by_repeating() {
-        assert_eq!(Rgb::from_rgb8(0xab, 0x00, 0xff), Rgb::new(0xabab, 0, 0xffff));
+        assert_eq!(
+            Rgb::from_rgb8(0xab, 0x00, 0xff),
+            Rgb::new(0xabab, 0, 0xffff)
+        );
         assert_eq!(Rgb::from_rgb8(0x1a, 0x2b, 0x3c).hex(), "#1a2b3c");
     }
 
@@ -563,7 +588,10 @@ mod tests {
         assert!(parse_spec("rgb:ff").is_err(), "one channel");
         assert!(parse_spec("rgb:ff/00/00/00").is_err(), "four channels");
         let error = parse_spec("rgb:ff//00").unwrap_err().to_string();
-        assert!(error.contains("green") && error.contains("empty"), "{error}");
+        assert!(
+            error.contains("green") && error.contains("empty"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -718,7 +746,10 @@ mod tests {
             ("#2e3440", "nord"),
             ("#002b36", "solarized dark"),
             ("#1d2021", "gruvbox dark"),
-            ("#0000ff", "pure blue, which is dark despite being saturated"),
+            (
+                "#0000ff",
+                "pure blue, which is dark despite being saturated",
+            ),
         ];
         for (hex, name) in dark {
             let rgb = parse_spec(hex).unwrap();

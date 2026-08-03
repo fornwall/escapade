@@ -280,7 +280,11 @@ fn describe(theme: &Theme, sized: &SizedText, warnings: &[String]) {
                     theme.paint(line, Ink::Muted)
                 );
             } else {
-                println!("  {}  {}", " ".repeat(token_width), theme.paint(line, Ink::Muted));
+                println!(
+                    "  {}  {}",
+                    " ".repeat(token_width),
+                    theme.paint(line, Ink::Muted)
+                );
             }
         }
     }

@@ -131,7 +131,11 @@ fn is_collapsed_line(line: &str) -> bool {
 ///
 /// Fails if inferno cannot draw the graph — most often because the collapsed
 /// stacks are malformed.
-pub fn to_svg(collapsed: &str, args: &FlamegraphArgs, target_width: Option<u32>) -> Result<Vec<u8>> {
+pub fn to_svg(
+    collapsed: &str,
+    args: &FlamegraphArgs,
+    target_width: Option<u32>,
+) -> Result<Vec<u8>> {
     let mut options = options(args, target_width);
     let mut svg = Vec::new();
     // `from_lines` wants an iterator of &str, one collapsed stack per line.
@@ -271,7 +275,10 @@ mod tests {
     fn collapsed_stacks_are_recognised_by_shape() {
         assert!(is_collapsed_line("main;foo;bar 10"));
         assert!(is_collapsed_line("main 1"));
-        assert!(is_collapsed_line("a;b 2.5"), "fractional counts are allowed");
+        assert!(
+            is_collapsed_line("a;b 2.5"),
+            "fractional counts are allowed"
+        );
         assert!(!is_collapsed_line(""));
         assert!(!is_collapsed_line("# a comment"));
         assert!(!is_collapsed_line("no count here"));
@@ -417,18 +424,36 @@ mod tests {
             (FlamegraphPalette::Mem, Palette::Basic(BasicPalette::Mem)),
             (FlamegraphPalette::Io, Palette::Basic(BasicPalette::Io)),
             (FlamegraphPalette::Red, Palette::Basic(BasicPalette::Red)),
-            (FlamegraphPalette::Green, Palette::Basic(BasicPalette::Green)),
+            (
+                FlamegraphPalette::Green,
+                Palette::Basic(BasicPalette::Green),
+            ),
             (FlamegraphPalette::Blue, Palette::Basic(BasicPalette::Blue)),
             (FlamegraphPalette::Aqua, Palette::Basic(BasicPalette::Aqua)),
-            (FlamegraphPalette::Yellow, Palette::Basic(BasicPalette::Yellow)),
-            (FlamegraphPalette::Purple, Palette::Basic(BasicPalette::Purple)),
-            (FlamegraphPalette::Orange, Palette::Basic(BasicPalette::Orange)),
+            (
+                FlamegraphPalette::Yellow,
+                Palette::Basic(BasicPalette::Yellow),
+            ),
+            (
+                FlamegraphPalette::Purple,
+                Palette::Basic(BasicPalette::Purple),
+            ),
+            (
+                FlamegraphPalette::Orange,
+                Palette::Basic(BasicPalette::Orange),
+            ),
             (FlamegraphPalette::Java, Palette::Multi(MultiPalette::Java)),
             (FlamegraphPalette::Js, Palette::Multi(MultiPalette::Js)),
             (FlamegraphPalette::Perl, Palette::Multi(MultiPalette::Perl)),
-            (FlamegraphPalette::Python, Palette::Multi(MultiPalette::Python)),
+            (
+                FlamegraphPalette::Python,
+                Palette::Multi(MultiPalette::Python),
+            ),
             (FlamegraphPalette::Rust, Palette::Multi(MultiPalette::Rust)),
-            (FlamegraphPalette::Wakeup, Palette::Multi(MultiPalette::Wakeup)),
+            (
+                FlamegraphPalette::Wakeup,
+                Palette::Multi(MultiPalette::Wakeup),
+            ),
         ];
         for (flag, expected) in cases {
             assert_eq!(colors(flag), expected, "{flag:?}");

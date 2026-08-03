@@ -101,7 +101,11 @@ const STEPS: &[Step] = &[
     step!("query", "Asking about a codepoint", step_query),
     step!("shape", "A shape, before it is bytes", step_shape),
     step!("bytes", "The bytes", step_bytes),
-    step!("curves", "Curves, and the points that pull them", step_curves),
+    step!(
+        "curves",
+        "Curves, and the points that pull them",
+        step_curves
+    ),
     step!("winding", "Holes, and which way round you go", step_winding),
     step!("upm", "One payload, any font size", step_upm),
     step!("prompt", "A prompt with no patched font", step_prompt),
@@ -125,11 +129,7 @@ pub fn list_steps(theme: &Theme) {
     println!();
     println!("  {}", theme.paint("Glyph Protocol demo", Ink::Title));
     println!();
-    let width = STEPS
-        .iter()
-        .map(|step| step.name.len())
-        .max()
-        .unwrap_or(0);
+    let width = STEPS.iter().map(|step| step.name.len()).max().unwrap_or(0);
     for (index, step) in STEPS.iter().enumerate() {
         println!(
             "  {} {}  {}",
@@ -141,11 +141,17 @@ pub fn list_steps(theme: &Theme) {
     println!();
     println!(
         "  {}",
-        theme.paint("escapade glyph demo --only <NAME>   run just that step", Ink::Muted)
+        theme.paint(
+            "escapade glyph demo --only <NAME>   run just that step",
+            Ink::Muted
+        )
     );
     println!(
         "  {}",
-        theme.paint("escapade glyph demo --step N        start there and carry on", Ink::Muted)
+        theme.paint(
+            "escapade glyph demo --step N        start there and carry on",
+            Ink::Muted
+        )
     );
     println!();
 }
@@ -259,7 +265,10 @@ fn refuse(theme: &Theme, outcome: &probe::ProbeOutcome) {
         ) {
             println!("  {}", theme.paint(&line, Ink::Muted));
         }
-        println!("  {}", theme.paint(multiplexer.passthrough_hint(), Ink::Code));
+        println!(
+            "  {}",
+            theme.paint(multiplexer.passthrough_hint(), Ink::Code)
+        );
     }
 
     if !outcome.interactive {
@@ -347,7 +356,8 @@ impl Ctx<'_> {
     /// Writes one line at a deeper indent.
     fn indented(&mut self, indent: usize, text: &str) -> Result<()> {
         let row = self.row;
-        self.term.put(MARGIN + u16::try_from(indent).unwrap_or(0), row, text)?;
+        self.term
+            .put(MARGIN + u16::try_from(indent).unwrap_or(0), row, text)?;
         self.row = self.row.saturating_add(1);
         Ok(())
     }
@@ -420,9 +430,10 @@ impl Ctx<'_> {
         let wanted = format!("{PREFIX};{verb}");
         let reply = self
             .input
-            .wait_for_reply(REPLY_TIMEOUT, |reply| {
-                matches!(reply, Reply::Apc(payload) if payload.starts_with(&wanted))
-            })
+            .wait_for_reply(
+                REPLY_TIMEOUT,
+                |reply| matches!(reply, Reply::Apc(payload) if payload.starts_with(&wanted)),
+            )
             .unwrap_or(None);
         Ok(match reply {
             Some(Reply::Apc(payload)) => parse_reply(&payload),
@@ -515,10 +526,9 @@ impl Ctx<'_> {
     /// Draws the footer hint and blocks until the user chooses.
     fn wait(&mut self) -> Result<Flow> {
         let row = self.term.rows.saturating_sub(2);
-        let hint = self.theme.paint(
-            "space/enter next · p back · q quit",
-            Ink::Muted,
-        );
+        let hint = self
+            .theme
+            .paint("space/enter next · p back · q quit", Ink::Muted);
         self.term.put(MARGIN, row, &hint)?;
         self.term.flush()?;
         Ok(self.input.wait_for_advance()?.into())
@@ -572,7 +582,9 @@ fn step_handshake(ctx: &mut Ctx<'_>) -> Result<Flow> {
             .paint(&format!("✔ answered: fmt={}", names.join(",")), Ink::Good);
         ctx.indented(2, &text)?;
         ctx.blank();
-        ctx.note("glyf is required in v1. colrv0 and colrv1 add colour, and arrived in spec v1.2.")?;
+        ctx.note(
+            "glyf is required in v1. colrv0 and colrv1 add colour, and arrived in spec v1.2.",
+        )?;
         if ctx.accepts(Format::Colrv0) || ctx.accepts(Format::Colrv1) {
             ctx.note(
                 "This terminal accepts colour glyphs, so the outlines in this demo could \
@@ -622,7 +634,11 @@ fn step_query(ctx: &mut Ctx<'_>) -> Result<Flow> {
         let reply = ctx.ask(&codepoint_query(codepoint), "q")?;
         let (symbol, ink, description) = match reply {
             Some(GlyphReply::Query { coverage, .. }) => {
-                let ink = if coverage.renders() { Ink::Good } else { Ink::Warn };
+                let ink = if coverage.renders() {
+                    Ink::Good
+                } else {
+                    Ink::Warn
+                };
                 let symbol = if coverage.renders() { "✔" } else { "·" };
                 (symbol, ink, coverage.describe().to_owned())
             }
@@ -693,7 +709,8 @@ fn step_shape(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.note(&format!(
         "Coordinates live in a {}×{} box inside a upm=1000 em, which is roughly the shape of a \
          terminal cell. Green dots are on the curve; there are no control points yet.",
-        art::DESIGN_WIDTH, art::DESIGN_HEIGHT
+        art::DESIGN_WIDTH,
+        art::DESIGN_HEIGHT
     ))?;
 
     ctx.wait()
@@ -715,7 +732,8 @@ fn step_bytes(ctx: &mut Ctx<'_>) -> Result<Flow> {
         let hex: Vec<String> = field.bytes.iter().map(|b| format!("{b:02x}")).collect();
         let text = format!(
             "{}  {}",
-            ctx.theme.paint(&format!("{:<24}", field.label), Ink::Accent),
+            ctx.theme
+                .paint(&format!("{:<24}", field.label), Ink::Accent),
             ctx.theme.paint(&hex.join(" "), Ink::Code)
         );
         ctx.indented(2, &text)?;
@@ -784,7 +802,9 @@ fn step_curves(ctx: &mut Ctx<'_>) -> Result<Flow> {
     let outline = art::chevron();
     ctx.plot(&outline, art::DESIGN_HEIGHT, 22, 9)?;
     ctx.blank();
-    ctx.note("Amber dots are control points. Every one of them bends a segment without lying on it.")?;
+    ctx.note(
+        "Amber dots are control points. Every one of them bends a segment without lying on it.",
+    )?;
     ctx.blank();
 
     let counts = format!(
@@ -838,7 +858,10 @@ fn step_winding(ctx: &mut Ctx<'_>) -> Result<Flow> {
     let result = ctx.register(art::CP_RING, &outline, DEFAULT_UPM)?;
     ctx.report_registration(result)?;
     ctx.blank();
-    ctx.showcase(art::CP_RING, "outer contour clockwise, inner counter-clockwise")?;
+    ctx.showcase(
+        art::CP_RING,
+        "outer contour clockwise, inner counter-clockwise",
+    )?;
 
     ctx.wait()
 }
@@ -896,7 +919,8 @@ fn step_upm(ctx: &mut Ctx<'_>) -> Result<Flow> {
     let comparison = format!(
         "{}   {}",
         ctx.theme.paint(&format!("{fine} {fine} {fine}"), Ink::Good),
-        ctx.theme.paint(&format!("{rough} {rough} {rough}"), Ink::Warn)
+        ctx.theme
+            .paint(&format!("{rough} {rough} {rough}"), Ink::Warn)
     );
     ctx.indented(2, &comparison)?;
     ctx.blank();
@@ -954,9 +978,7 @@ fn step_prompt(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.indented(2, &ctx.theme.paint("❯ cargo test", Ink::Muted))?;
     ctx.blank();
 
-    let cost = format!(
-        "{total} bytes of glyf for all four, sent once at startup"
-    );
+    let cost = format!("{total} bytes of glyf for all four, sent once at startup");
     ctx.indented(2, &ctx.theme.paint(&cost, Ink::Strong))?;
     ctx.blank();
     ctx.note(
@@ -1030,11 +1052,12 @@ fn step_editor(ctx: &mut Ctx<'_>) -> Result<Flow> {
 
             for (index, point) in points.iter().enumerate() {
                 let marker = if index == selected { "▸" } else { " " };
-                let kind = if point.on_curve { "on-curve" } else { "control " };
-                let text = format!(
-                    "{marker} {index}  {:>4} {:>4}  {kind}",
-                    point.x, point.y
-                );
+                let kind = if point.on_curve {
+                    "on-curve"
+                } else {
+                    "control "
+                };
+                let text = format!("{marker} {index}  {:>4} {:>4}  {kind}", point.x, point.y);
                 let ink = if index == selected {
                     Ink::Title
                 } else if point.on_curve {
@@ -1116,11 +1139,9 @@ fn step_editor(ctx: &mut Ctx<'_>) -> Result<Flow> {
                     {
                         let fx = f64::from(mouse.col - left) / f64::from(cols);
                         let fy = f64::from(mouse.row - plot_top) / f64::from(rows);
-                        points[selected].x =
-                            glyf::round(fx * f64::from(art::DESIGN_HEIGHT));
-                        points[selected].y = glyf::round(
-                            (1.0 - fy) * f64::from(art::DESIGN_HEIGHT),
-                        );
+                        points[selected].x = glyf::round(fx * f64::from(art::DESIGN_HEIGHT));
+                        points[selected].y =
+                            glyf::round((1.0 - fy) * f64::from(art::DESIGN_HEIGHT));
                         dirty = true;
                     }
                 }
@@ -1223,7 +1244,10 @@ fn step_animation(ctx: &mut Ctx<'_>) -> Result<Flow> {
                 let red = 90 + scale_to(intensity, 165);
                 let green = 40 + scale_to(intensity, 120);
                 let blue = 200 - scale_to(intensity, 90);
-                append(&mut wave, format_args!("\u{1b}[38;2;{red};{green};{blue}m{glyph}"));
+                append(
+                    &mut wave,
+                    format_args!("\u{1b}[38;2;{red};{green};{blue}m{glyph}"),
+                );
             } else {
                 wave.push(glyph);
             }
@@ -1358,7 +1382,10 @@ fn step_finale(ctx: &mut Ctx<'_>) -> Result<Flow> {
             "{}  {}  {}",
             ctx.theme.paint(&format!("score {score:>4}"), Ink::Good),
             ctx.theme.paint(
-                &format!("lives {}", "♥".repeat(usize::try_from(lives.max(0)).unwrap_or(0))),
+                &format!(
+                    "lives {}",
+                    "♥".repeat(usize::try_from(lives.max(0)).unwrap_or(0))
+                ),
                 Ink::Bad
             ),
             ctx.theme
@@ -1458,8 +1485,10 @@ fn step_leave(ctx: &mut Ctx<'_>) -> Result<Flow> {
     println!(
         "  {} {}",
         ctx.theme.paint("Glyph Protocol:", Ink::Accent),
-        ctx.theme
-            .paint("https://rapha.land/introducing-glyph-protocol-for-terminals/", Ink::Link)
+        ctx.theme.paint(
+            "https://rapha.land/introducing-glyph-protocol-for-terminals/",
+            Ink::Link
+        )
     );
     let supported = if ctx.supported {
         let names: Vec<&str> = ctx.formats.iter().map(|f| f.as_str()).collect();
@@ -1565,7 +1594,10 @@ mod tests {
         let names = step_names();
         let selection = crate::features::select_steps(&names, Some("editor"), None).unwrap();
         assert_eq!(STEPS[selection.start].name, "editor");
-        assert!(selection.single, "--only must not run on into the next step");
+        assert!(
+            selection.single,
+            "--only must not run on into the next step"
+        );
     }
 
     #[test]
@@ -1590,7 +1622,10 @@ mod tests {
 
     #[test]
     fn out_of_range_step_clamps_to_the_last_one() {
-        assert_eq!(999_usize.saturating_sub(1).min(STEPS.len() - 1), STEPS.len() - 1);
+        assert_eq!(
+            999_usize.saturating_sub(1).min(STEPS.len() - 1),
+            STEPS.len() - 1
+        );
     }
 
     #[test]
@@ -1630,10 +1665,7 @@ mod tests {
 
         let mut point = Point::on(990, 990);
         nudge(&mut point, 500, 500);
-        assert_eq!(
-            (point.x, point.y),
-            (art::DESIGN_HEIGHT, art::DESIGN_HEIGHT)
-        );
+        assert_eq!((point.x, point.y), (art::DESIGN_HEIGHT, art::DESIGN_HEIGHT));
     }
 
     #[test]

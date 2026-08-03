@@ -171,6 +171,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_shielded_round_of_queries_leaves_no_trace_on_a_terminal_that_prints_dcs() {
+        // One name per query means a round is a long string of them, and a
+        // terminal with no state for `ESC P` prints every body: `+q524742+q...`.
+        // `Session::round` sends the batch through the same shield.
+        use crate::term::{
+            screen::{Screen, Strings},
+            shielded,
+        };
+        let queries: String = ["RGB", "Tc", "setrgbf", "Su", "hpa"]
+            .iter()
+            .map(|name| query(name))
+            .collect();
+        let mut screen = Screen::new(80, 24, Strings::Printed);
+        screen.goto(23, 0);
+        let before = screen.text();
+        screen.feed(&shielded(&queries));
+        assert_eq!(screen.text(), before, "the queries were left on the screen");
+        assert_eq!(screen.cursor(), (23, 0));
+        assert_eq!(screen.scrolled(), 0);
+    }
+
+    #[test]
     fn the_query_matches_the_specification() {
         // DCS + q 524742 ST, where 524742 is "RGB".
         assert_eq!(query("RGB"), "\u{1b}P+q524742\u{1b}\\");
@@ -189,7 +211,9 @@ mod tests {
 
     #[test]
     fn hex_encoding_round_trips() {
-        for name in ["RGB", "Tc", "Co", "smcup", "rmcup", "Ms", "BE", "kbs", "TN", "Sync"] {
+        for name in [
+            "RGB", "Tc", "Co", "smcup", "rmcup", "Ms", "BE", "kbs", "TN", "Sync",
+        ] {
             assert_eq!(decode(&encode(name)).as_deref(), Some(name), "{name}");
         }
     }
@@ -255,8 +279,14 @@ mod tests {
         assert_eq!(
             reply,
             Reply::Found(vec![
-                Entry { name: "RGB".to_owned(), value: Some("8".to_owned()) },
-                Entry { name: "Tc".to_owned(), value: Some("1".to_owned()) },
+                Entry {
+                    name: "RGB".to_owned(),
+                    value: Some("8".to_owned())
+                },
+                Entry {
+                    name: "Tc".to_owned(),
+                    value: Some("1".to_owned())
+                },
             ])
         );
     }
@@ -267,7 +297,10 @@ mod tests {
         let reply = parse("1+r5463").unwrap();
         assert_eq!(
             reply,
-            Reply::Found(vec![Entry { name: "Tc".to_owned(), value: None }])
+            Reply::Found(vec![Entry {
+                name: "Tc".to_owned(),
+                value: None
+            }])
         );
     }
 
@@ -278,7 +311,10 @@ mod tests {
         let reply = parse("1+r5463=").unwrap();
         assert_eq!(
             reply,
-            Reply::Found(vec![Entry { name: "Tc".to_owned(), value: Some(String::new()) }])
+            Reply::Found(vec![Entry {
+                name: "Tc".to_owned(),
+                value: Some(String::new())
+            }])
         );
     }
 

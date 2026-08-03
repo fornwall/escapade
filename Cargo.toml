@@ -5,8 +5,9 @@ edition = "2024"
 rust-version = "1.97.1"
 description = "Demonstrate, visualize and actually use modern terminal features"
 authors = ["Fredrik Fornwall <fredrik@fornwall.net>"]
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/fornwall/escapade"
 keywords = ["terminal", "escape-sequences", "tui", "glyph-protocol", "kitty"]
 categories = ["command-line-utilities", "command-line-interface"]
 

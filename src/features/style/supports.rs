@@ -14,7 +14,7 @@
 //!
 //! # Three states, on purpose
 //!
-//! A capability in [`Row::renders`] is a yes. One in [`Row::unverified`] is an honest
+//! A capability in `Entry::renders` is a yes. One in `Entry::unverified` is an honest
 //! "nobody has checked *this attribute* on *this terminal*". One in neither is a no.
 //! Folding the middle case into a no is exactly the confident-wrong-answer failure
 //! this project exists to avoid, and it is why this table has gaps in it rather than
@@ -166,35 +166,71 @@ const ENTRIES: &[Entry] = &[
     // The four that implement essentially the whole family.
     Entry {
         terminal: "kitty",
-        renders: &[VT100, MODERN, ALL_SHAPES, PALETTE_COLORS, TRUE_COLORS, UNDERLINE_COLORS],
-        unverified: &[&[Capability::Blink, Capability::RapidBlink, Capability::Conceal]],
-        since: None,
-    },
-    Entry {
-        terminal: "wezterm",
-        renders: &[VT100, MODERN, ALL_SHAPES, PALETTE_COLORS, TRUE_COLORS, UNDERLINE_COLORS],
+        renders: &[
+            VT100,
+            MODERN,
+            ALL_SHAPES,
+            PALETTE_COLORS,
+            TRUE_COLORS,
+            UNDERLINE_COLORS,
+        ],
         unverified: &[&[
             Capability::Blink,
             Capability::RapidBlink,
             Capability::Conceal,
-            Capability::Overline
+        ]],
+        since: None,
+    },
+    Entry {
+        terminal: "wezterm",
+        renders: &[
+            VT100,
+            MODERN,
+            ALL_SHAPES,
+            PALETTE_COLORS,
+            TRUE_COLORS,
+            UNDERLINE_COLORS,
+        ],
+        unverified: &[&[
+            Capability::Blink,
+            Capability::RapidBlink,
+            Capability::Conceal,
+            Capability::Overline,
         ]],
         since: None,
     },
     Entry {
         terminal: "foot",
-        renders: &[VT100, MODERN, ALL_SHAPES, PALETTE_COLORS, TRUE_COLORS, UNDERLINE_COLORS],
-        unverified: &[&[Capability::Blink, Capability::RapidBlink, Capability::Conceal]],
-        since: None,
-    },
-    Entry {
-        terminal: "ghostty",
-        renders: &[VT100, MODERN, ALL_SHAPES, PALETTE_COLORS, TRUE_COLORS, UNDERLINE_COLORS],
+        renders: &[
+            VT100,
+            MODERN,
+            ALL_SHAPES,
+            PALETTE_COLORS,
+            TRUE_COLORS,
+            UNDERLINE_COLORS,
+        ],
         unverified: &[&[
             Capability::Blink,
             Capability::RapidBlink,
             Capability::Conceal,
-            Capability::Overline
+        ]],
+        since: None,
+    },
+    Entry {
+        terminal: "ghostty",
+        renders: &[
+            VT100,
+            MODERN,
+            ALL_SHAPES,
+            PALETTE_COLORS,
+            TRUE_COLORS,
+            UNDERLINE_COLORS,
+        ],
+        unverified: &[&[
+            Capability::Blink,
+            Capability::RapidBlink,
+            Capability::Conceal,
+            Capability::Overline,
         ]],
         since: None,
     },
@@ -202,43 +238,75 @@ const ENTRIES: &[Entry] = &[
     // shapes are the ones to check.
     Entry {
         terminal: "gnome-terminal",
-        renders: &[VT100, MODERN, EARLY_SHAPES, PALETTE_COLORS, TRUE_COLORS, UNDERLINE_COLORS],
+        renders: &[
+            VT100,
+            MODERN,
+            EARLY_SHAPES,
+            PALETTE_COLORS,
+            TRUE_COLORS,
+            UNDERLINE_COLORS,
+        ],
         unverified: &[
             LATE_SHAPES,
-            &[Capability::Blink, Capability::RapidBlink, Capability::Conceal]
+            &[
+                Capability::Blink,
+                Capability::RapidBlink,
+                Capability::Conceal,
+            ],
         ],
         since: Some("0.52"),
     },
     Entry {
         terminal: "windows-terminal",
-        renders: &[VT100, MODERN, ALL_SHAPES, PALETTE_COLORS, TRUE_COLORS, UNDERLINE_COLORS],
+        renders: &[
+            VT100,
+            MODERN,
+            ALL_SHAPES,
+            PALETTE_COLORS,
+            TRUE_COLORS,
+            UNDERLINE_COLORS,
+        ],
         unverified: &[&[
             Capability::Blink,
             Capability::RapidBlink,
             Capability::Conceal,
-            Capability::Overline
+            Capability::Overline,
         ]],
         since: None,
     },
     Entry {
         terminal: "vscode",
-        renders: &[VT100, MODERN, ALL_SHAPES, PALETTE_COLORS, TRUE_COLORS, UNDERLINE_COLORS],
+        renders: &[
+            VT100,
+            MODERN,
+            ALL_SHAPES,
+            PALETTE_COLORS,
+            TRUE_COLORS,
+            UNDERLINE_COLORS,
+        ],
         unverified: &[&[
             Capability::Blink,
             Capability::RapidBlink,
             Capability::Conceal,
-            Capability::Overline
+            Capability::Overline,
         ]],
         since: None,
     },
     Entry {
         terminal: "alacritty",
-        renders: &[VT100, MODERN, ALL_SHAPES, PALETTE_COLORS, TRUE_COLORS, UNDERLINE_COLORS],
+        renders: &[
+            VT100,
+            MODERN,
+            ALL_SHAPES,
+            PALETTE_COLORS,
+            TRUE_COLORS,
+            UNDERLINE_COLORS,
+        ],
         unverified: &[&[
             Capability::Blink,
             Capability::RapidBlink,
             Capability::Conceal,
-            Capability::Overline
+            Capability::Overline,
         ]],
         since: None,
     },
@@ -252,8 +320,8 @@ const ENTRIES: &[Entry] = &[
                 Capability::Blink,
                 Capability::RapidBlink,
                 Capability::Conceal,
-                Capability::Overline
-            ]
+                Capability::Overline,
+            ],
         ],
         since: None,
     },
@@ -267,8 +335,8 @@ const ENTRIES: &[Entry] = &[
                 Capability::Blink,
                 Capability::RapidBlink,
                 Capability::Conceal,
-                Capability::Overline
-            ]
+                Capability::Overline,
+            ],
         ],
         since: None,
     },
@@ -282,8 +350,8 @@ const ENTRIES: &[Entry] = &[
                 Capability::Blink,
                 Capability::RapidBlink,
                 Capability::Conceal,
-                Capability::Overline
-            ]
+                Capability::Overline,
+            ],
         ],
         since: None,
     },
@@ -297,8 +365,8 @@ const ENTRIES: &[Entry] = &[
                 Capability::Blink,
                 Capability::RapidBlink,
                 Capability::Conceal,
-                Capability::Overline
-            ]
+                Capability::Overline,
+            ],
         ],
         since: None,
     },
@@ -330,8 +398,8 @@ const ENTRIES: &[Entry] = &[
                 Capability::Blink,
                 Capability::RapidBlink,
                 Capability::Conceal,
-                Capability::Overline
-            ]
+                Capability::Overline,
+            ],
         ],
         since: None,
     },
@@ -347,8 +415,8 @@ const ENTRIES: &[Entry] = &[
                 Capability::Blink,
                 Capability::RapidBlink,
                 Capability::Conceal,
-                Capability::Overline
-            ]
+                Capability::Overline,
+            ],
         ],
         since: None,
     },
@@ -358,7 +426,11 @@ const ENTRIES: &[Entry] = &[
         unverified: &[
             TRUE_COLORS,
             MODERN,
-            &[Capability::Blink, Capability::RapidBlink, Capability::Conceal]
+            &[
+                Capability::Blink,
+                Capability::RapidBlink,
+                Capability::Conceal,
+            ],
         ],
         since: None,
     },
@@ -381,7 +453,12 @@ fn flatten(terminal: &str, pick: fn(&Entry) -> Groups) -> Vec<Capability> {
     ENTRIES
         .iter()
         .find(|entry| entry.terminal == terminal)
-        .map(|entry| pick(entry).iter().flat_map(|group| group.iter().copied()).collect())
+        .map(|entry| {
+            pick(entry)
+                .iter()
+                .flat_map(|group| group.iter().copied())
+                .collect()
+        })
         .unwrap_or_default()
 }
 

@@ -565,12 +565,8 @@ mod tests {
     fn averaging_ignores_the_colour_of_transparent_pixels() {
         // Half opaque white, half transparent *green*: the result must be white
         // at half alpha, not a greenish tint.
-        let image = Rgba::from_raw(
-            2,
-            1,
-            vec![0xff, 0xff, 0xff, 0xff, 0x00, 0xff, 0x00, 0x00],
-        )
-        .unwrap();
+        let image =
+            Rgba::from_raw(2, 1, vec![0xff, 0xff, 0xff, 0xff, 0x00, 0xff, 0x00, 0x00]).unwrap();
         let small = image.resize(1, 1).unwrap();
         assert_eq!(small.get(0, 0), [0xff, 0xff, 0xff, 128]);
     }
@@ -662,7 +658,10 @@ mod tests {
             parse_background("white").unwrap(),
             Background::Colour(Colour::WHITE)
         );
-        assert_eq!(parse_background("BLACK").unwrap(), Background::Colour(Colour::BLACK));
+        assert_eq!(
+            parse_background("BLACK").unwrap(),
+            Background::Colour(Colour::BLACK)
+        );
         assert_eq!(parse_background("none").unwrap(), Background::Keep);
         assert_eq!(parse_background("  none  ").unwrap(), Background::Keep);
         assert_eq!(Background::default(), Background::Keep);

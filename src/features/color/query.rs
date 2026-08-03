@@ -354,9 +354,12 @@ fn round_trip(
         input.drain();
     }
 
-    for target in targets {
-        term.write(&target.query())?;
-    }
+    // Every colour question is an OSC string, and a terminal that implements none
+    // of them may print the body — `10;?`, `11;?`, `4;3;?` — instead of
+    // discarding it. One shield covers the whole batch; the barrier is a control
+    // sequence and needs none.
+    let queries: String = targets.iter().map(|target| target.query()).collect();
+    term.write_query(&queries)?;
     term.write_now(&barrier())?;
 
     let deadline = Instant::now() + REPLY_TIMEOUT;
@@ -388,7 +391,9 @@ fn round_trip(
                 // answer to anything here; keep it for the debug report.
                 Err(_) => outcome.stray.push(reply.clone()),
             },
-            Reply::Csi { final_byte: 'c', .. } => {
+            Reply::Csi {
+                final_byte: 'c', ..
+            } => {
                 // Everything sent before the barrier has been processed, so
                 // anything still missing is missing on purpose.
                 outcome.answered_barrier = true;
@@ -434,7 +439,13 @@ fn drain_barrier(input: &mut InputReader, outcome: &mut Answers) {
         return;
     }
     if let Ok(Some(reply)) = input.wait_for_reply(DRAIN_TIMEOUT, |reply| {
-        matches!(reply, Reply::Csi { final_byte: 'c', .. })
+        matches!(
+            reply,
+            Reply::Csi {
+                final_byte: 'c',
+                ..
+            }
+        )
     }) {
         outcome.stray.retain(|kept| kept != &reply);
         outcome.answered_barrier = true;
@@ -448,6 +459,28 @@ fn drain_barrier(input: &mut InputReader, outcome: &mut Answers) {
 mod tests {
     use super::*;
     use crate::term::pretty;
+
+    #[test]
+    fn a_shielded_batch_leaves_no_trace_on_a_terminal_that_prints_osc() {
+        use crate::term::{
+            screen::{Screen, Strings},
+            shielded,
+        };
+        let targets = [
+            Target::Background,
+            Target::Foreground,
+            Target::Cursor,
+            Target::Palette(3),
+        ];
+        let queries: String = targets.iter().map(|target| target.query()).collect();
+        let mut screen = Screen::new(80, 24, Strings::Printed);
+        screen.goto(23, 0);
+        let before = screen.text();
+        screen.feed(&shielded(&queries));
+        assert_eq!(screen.text(), before, "the queries were left on the screen");
+        assert_eq!(screen.cursor(), (23, 0));
+        assert_eq!(screen.scrolled(), 0);
+    }
 
     #[test]
     fn every_target_asks_with_the_documented_osc_number() {
@@ -486,7 +519,10 @@ mod tests {
 
         let background = parse_reply("11;rgb:0/0/0").unwrap();
         assert!(Target::Background.matches(&background));
-        assert!(!Target::Palette(11).matches(&background), "11 is not index 11");
+        assert!(
+            !Target::Palette(11).matches(&background),
+            "11 is not index 11"
+        );
     }
 
     #[test]
@@ -558,7 +594,8 @@ mod tests {
         let mut slugs: Vec<String> = targets.iter().map(|target| target.slug()).collect();
         for slug in &slugs {
             assert!(
-                slug.chars().all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-'),
+                slug.chars()
+                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-'),
                 "{slug} is not kebab-case"
             );
         }

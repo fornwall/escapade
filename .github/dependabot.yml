@@ -1,0 +1,24 @@
+version: 2
+
+updates:
+  # Action pins rot silently, and a stale pin is how a workflow ends up on a
+  # retired runner or a deprecated action version. There are only three actions
+  # here, so grouping them means at most one pull request when anything moves.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+
+  # Cargo.lock is committed and CI builds with --locked, so it needs deliberate
+  # updating. Minor and patch bumps arrive as one pull request a month; majors
+  # come separately, because those are the ones worth reading.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]

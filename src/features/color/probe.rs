@@ -331,7 +331,10 @@ fn print_debug(theme: &Theme, outcome: &Outcome) {
     println!();
     println!(
         "  {}",
-        theme.paint("Colour query support (OSC 4/10/11/12, DEC mode 2031)", Ink::Title)
+        theme.paint(
+            "Colour query support (OSC 4/10/11/12, DEC mode 2031)",
+            Ink::Title
+        )
     );
     println!();
     for line in wrap(
@@ -469,7 +472,10 @@ fn verdict_line(theme: &Theme, what: &str, support: Support, reason: &str) {
         "  {} {}  {}",
         theme.paint(symbol, ink),
         theme.paint(&format!("{what}: {}", support.as_str()), ink),
-        theme.paint(&format!("({})", exit_status_note(what, support)), Ink::Muted)
+        theme.paint(
+            &format!("({})", exit_status_note(what, support)),
+            Ink::Muted
+        )
     );
     for line in wrap(reason, theme.width().saturating_sub(6)) {
         println!("      {}", theme.paint(&line, Ink::Muted));
@@ -572,7 +578,11 @@ mod tests {
             true,
         );
         assert_eq!(probe.support(), Support::No);
-        assert!(probe.reason().contains("had its chance"), "{}", probe.reason());
+        assert!(
+            probe.reason().contains("had its chance"),
+            "{}",
+            probe.reason()
+        );
     }
 
     #[test]
@@ -600,7 +610,11 @@ mod tests {
     fn no_terminal_is_unknown_rather_than_no() {
         let probe = outcome(vec![silent(Target::Background)], false, false);
         assert_eq!(probe.support(), Support::Unknown);
-        assert!(probe.reason().contains("not both terminals"), "{}", probe.reason());
+        assert!(
+            probe.reason().contains("not both terminals"),
+            "{}",
+            probe.reason()
+        );
     }
 
     #[test]
@@ -660,7 +674,11 @@ mod tests {
     fn the_json_carries_the_raw_reply_beside_the_normalised_value() {
         // The evidence rule: a reader must be able to check the claim that
         // `rgb:f/0/0` means `#ff0000`, and a bug report needs the original.
-        let probe = outcome(vec![answered(Target::Background, "11;rgb:f/0/0")], true, true);
+        let probe = outcome(
+            vec![answered(Target::Background, "11;rgb:f/0/0")],
+            true,
+            true,
+        );
         let line = json_line(&probe);
         assert!(line.contains("\"raw\":\"rgb:f/0/0\""), "{line}");
         assert!(line.contains("\"hex\":\"#ff0000\""), "{line}");

@@ -177,7 +177,10 @@ fn params_markdown(feature: &Feature) -> String {
 fn users_markdown(feature: &Feature) -> String {
     let mut out = String::new();
     for user in &feature.user {
-        append(&mut out, format_args!("* **{}** *({})*", user.name, user.kind));
+        append(
+            &mut out,
+            format_args!("* **{}** *({})*", user.name, user.kind),
+        );
         if let Some(notes) = &user.notes {
             append(&mut out, format_args!(" — {notes}"));
         }
@@ -223,7 +226,11 @@ fn matrix(theme: &Theme, catalog: &Catalog, feature: &Feature) {
         let lines = wrap(&names.join(", "), theme.width().saturating_sub(indent));
         for (index, line) in lines.iter().enumerate() {
             if index == 0 {
-                println!("  {} {}", theme.paint(&label, Ink::Bad), theme.paint(line, Ink::Muted));
+                println!(
+                    "  {} {}",
+                    theme.paint(&label, Ink::Bad),
+                    theme.paint(line, Ink::Muted)
+                );
             } else {
                 println!("{}{}", " ".repeat(indent), theme.paint(line, Ink::Muted));
             }
@@ -320,10 +327,7 @@ fn verbs_for(feature_id: &str) -> &'static [(&'static str, &'static str)] {
         ],
         "grapheme-clustering" => &[
             ("probe", "does this terminal support it?"),
-            (
-                "probe <CODEPOINTS>",
-                "is this sequence one character here?",
-            ),
+            ("probe <CODEPOINTS>", "is this sequence one character here?"),
             (
                 "render <CODEPOINTS>",
                 "render it, with clustering switched on",
@@ -357,14 +361,20 @@ fn verbs_for(feature_id: &str) -> &'static [(&'static str, &'static str)] {
             ("probe", "which colour queries does it answer?"),
         ],
         "clipboard" => &[
-            ("copy <TEXT>", "put text on the clipboard, over ssh if need be"),
+            (
+                "copy <TEXT>",
+                "put text on the clipboard, over ssh if need be",
+            ),
             ("paste", "read it back, if the terminal permits"),
             ("probe", "does this terminal allow it?"),
             ("demo", "watch it work, sequence by sequence"),
         ],
         "text-attributes" => &[
             ("--bold --underline=curly <TEXT>", "style text right now"),
-            ("probe --bold", "which attributes does this terminal render?"),
+            (
+                "probe --bold",
+                "which attributes does this terminal render?",
+            ),
             ("demo", "watch it work, sequence by sequence"),
         ],
         "keyboard-protocol" => &[

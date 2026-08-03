@@ -45,7 +45,7 @@ use crate::{
         notification::sequence::{Osc99Support, Protocol, osc99_query, parse_osc99_reply},
     },
     input::{InputReader, Reply},
-    term::{CSI, Multiplexer, Term, pretty},
+    term::{CSI, Multiplexer, Term, pretty, wrapped},
     theme::{Ink, Theme},
 };
 
@@ -487,7 +487,7 @@ impl ProbeOutcome {
         }
     }
 
-    /// The measurable evidence, gathered up for [`infer`].
+    /// The measurable evidence, gathered up for [`infer()`].
     #[must_use]
     pub fn measurement(&self) -> Measurement {
         Measurement {
@@ -577,7 +577,7 @@ pub fn infer(
         .collect()
 }
 
-/// One protocol's verdict. See [`infer`] for the mapping.
+/// One protocol's verdict. See [`infer()`] for the mapping.
 fn verdict_for(
     protocol: Protocol,
     identity: &Identity,
@@ -623,7 +623,9 @@ fn verdict_for(
             Confidence::Unknown,
             format!(
                 "nothing identified this terminal ({}={:?}), and {} cannot be asked",
-                identity.source, identity.raw, protocol.label()
+                identity.source,
+                identity.raw,
+                protocol.label()
             ),
         );
     };
@@ -652,7 +654,11 @@ fn verdict_for(
     }
 
     verdict(
-        if implemented { Support::Yes } else { Support::No },
+        if implemented {
+            Support::Yes
+        } else {
+            Support::No
+        },
         Confidence::Inferred,
         format!(
             "{} is recorded as {} {} ({}={})",
@@ -691,9 +697,11 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
     term.enable_raw()?;
     input.drain();
 
-    send(term, outcome.multiplexer, &osc99_query(QUERY_ID))?;
+    send_query(term, outcome.multiplexer, &osc99_query(QUERY_ID))?;
     // XTVERSION names the terminal even when the environment does not — an ssh
-    // hop drops TERM_PROGRAM but the terminal still answers for itself.
+    // hop drops TERM_PROGRAM but the terminal still answers for itself. It needs
+    // no shield: the control-sequence grammar is universal, so a terminal that
+    // has never heard of `> q` still consumes the whole sequence.
     send(term, outcome.multiplexer, &format!("{CSI}>q"))?;
     // The barrier is deliberately not wrapped for the multiplexer, so that it
     // reports on the round trip we can actually reason about. Note that a
@@ -725,7 +733,9 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
                     outcome.version = Some(name);
                 }
             }
-            Reply::Csi { final_byte: 'c', .. } => {
+            Reply::Csi {
+                final_byte: 'c', ..
+            } => {
                 // Everything sent before the barrier has now been processed, so
                 // waiting longer would learn nothing.
                 outcome.answered_barrier = true;
@@ -741,7 +751,13 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
     // what keeps a silent probe actually silent.
     if !outcome.answered_barrier {
         while let Ok(Some(reply)) = input.wait_for_reply(DRAIN_TIMEOUT, |_| true) {
-            let barrier = matches!(reply, Reply::Csi { final_byte: 'c', .. });
+            let barrier = matches!(
+                reply,
+                Reply::Csi {
+                    final_byte: 'c',
+                    ..
+                }
+            );
             match &reply {
                 Reply::Osc(payload) => {
                     if let Some(support) = parse_osc99_reply(payload) {
@@ -784,14 +800,29 @@ pub fn probe(term: &mut Term, input: &mut InputReader) -> Result<ProbeOutcome> {
 
 /// Sends a sequence, wrapping it for a multiplexer if one is in the way.
 ///
+/// This is the plain form, for sequences meant to have an effect. A *question*
+/// goes through [`send_query`] instead.
+///
 /// # Errors
 ///
 /// Fails if stdout does.
 pub fn send(term: &mut Term, multiplexer: Option<Multiplexer>, sequence: &str) -> Result<()> {
-    match multiplexer {
-        Some(multiplexer) => term.write_now(&multiplexer.wrap(sequence)),
-        None => term.write_now(sequence),
-    }
+    term.write_now(&wrapped(multiplexer, sequence))
+}
+
+/// Sends a query, wrapping it for a multiplexer if one is in the way and
+/// shielding the screen either way.
+///
+/// The `OSC 99 ; i=… : p=? ST` question is a control string, so a terminal with
+/// no state for it can print the body rather than discard it — see
+/// [`crate::term::shielded`]. Only queries go through here; an actual
+/// notification is sent by [`send`], which is meant to be seen.
+///
+/// # Errors
+///
+/// Fails if stdout does.
+pub fn send_query(term: &mut Term, multiplexer: Option<Multiplexer>, sequence: &str) -> Result<()> {
+    term.write_query(&wrapped(multiplexer, sequence))
 }
 
 /// Probes from scratch.
@@ -1035,7 +1066,11 @@ fn report_verdicts(theme: &Theme, outcome: &ProbeOutcome) {
             theme.paint(symbol, ink),
             theme.paint(verdict.protocol.label(), Ink::Strong),
             theme.paint(
-                &format!("[{} · {}]", verdict.support.as_str(), verdict.confidence.label()),
+                &format!(
+                    "[{} · {}]",
+                    verdict.support.as_str(),
+                    verdict.confidence.label()
+                ),
                 Ink::Muted
             ),
             theme.paint(verdict.protocol.capability(), Ink::Muted)
@@ -1048,7 +1083,10 @@ fn report_verdicts(theme: &Theme, outcome: &ProbeOutcome) {
 fn report_osc99(theme: &Theme, outcome: &ProbeOutcome) {
     if let Some(support) = &outcome.osc99 {
         println!();
-        println!("  {}", theme.paint("what OSC 99 said it can do", Ink::Accent));
+        println!(
+            "  {}",
+            theme.paint("what OSC 99 said it can do", Ink::Accent)
+        );
         for (label, value) in [
             ("payload types", support.payloads.join(", ")),
             ("urgencies", support.urgencies.join(", ")),
@@ -1109,7 +1147,10 @@ fn report_notes(theme: &Theme, outcome: &ProbeOutcome) {
         ) {
             println!("  {}", theme.paint(&line, Ink::Muted));
         }
-        println!("  {}", theme.paint(multiplexer.passthrough_hint(), Ink::Code));
+        println!(
+            "  {}",
+            theme.paint(multiplexer.passthrough_hint(), Ink::Code)
+        );
     }
 
     println!();
@@ -1203,7 +1244,11 @@ mod tests {
 
     #[test]
     fn known_terminals_have_distinct_tokens() {
-        let mut seen: Vec<&str> = KNOWN.iter().flat_map(|(tokens, _)| *tokens).copied().collect();
+        let mut seen: Vec<&str> = KNOWN
+            .iter()
+            .flat_map(|(tokens, _)| *tokens)
+            .copied()
+            .collect();
         seen.sort_unstable();
         let total = seen.len();
         seen.dedup();
@@ -1321,7 +1366,11 @@ mod tests {
                 verdict.protocol
             );
         }
-        assert!(verdicts[1].reason.contains("multiplexer"), "{}", verdicts[1].reason);
+        assert!(
+            verdicts[1].reason.contains("multiplexer"),
+            "{}",
+            verdicts[1].reason
+        );
     }
 
     #[test]
@@ -1381,7 +1430,11 @@ mod tests {
         for verdict in &verdicts {
             assert_eq!(verdict.support, Support::Unknown, "{:?}", verdict.protocol);
         }
-        assert!(verdicts[2].reason.contains("nothing there"), "{}", verdicts[2].reason);
+        assert!(
+            verdicts[2].reason.contains("nothing there"),
+            "{}",
+            verdicts[2].reason
+        );
     }
 
     #[test]
@@ -1459,7 +1512,10 @@ mod tests {
         assert!(line.contains("\"protocol\":\"kitty\""));
         // All three appear regardless of which one the status is about.
         for protocol in Protocol::RICHEST_FIRST {
-            assert!(line.contains(protocol.flag()), "{protocol:?} missing: {line}");
+            assert!(
+                line.contains(protocol.flag()),
+                "{protocol:?} missing: {line}"
+            );
         }
         assert!(line.contains("\"terminal\":\"kitty\""));
         assert!(line.contains("\"close_events\":true"));
@@ -1504,7 +1560,10 @@ mod tests {
             parse_xtversion(">|WezTerm 20240203-110809").as_deref(),
             Some("WezTerm")
         );
-        assert_eq!(parse_xtversion(">|ghostty 1.0.1").as_deref(), Some("ghostty"));
+        assert_eq!(
+            parse_xtversion(">|ghostty 1.0.1").as_deref(),
+            Some("ghostty")
+        );
         // Not an XTVERSION reply.
         assert_eq!(parse_xtversion("1$r2026h"), None);
         assert_eq!(parse_xtversion(">|"), None);

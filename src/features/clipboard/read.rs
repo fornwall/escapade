@@ -179,7 +179,9 @@ pub fn ask(
     term.enable_raw()?;
     input.drain();
 
-    term.write(&sequence::query(selection))?;
+    // Shielded: `OSC 52 ; c ; ? ST` is a control string, and a terminal that does
+    // not implement it can print `52;c;?` rather than discarding it.
+    term.write_query(&sequence::query(selection))?;
     term.write_now(&probe::barrier_query())?;
 
     let expect_prompt = patience > REPLY_TIMEOUT;
@@ -221,7 +223,13 @@ pub fn ask(
 
     if !outcome.answered_barrier
         && let Ok(Some(reply)) = input.wait_for_reply(DRAIN_TIMEOUT, |reply| {
-            matches!(reply, InputReply::Csi { final_byte: 'c', .. })
+            matches!(
+                reply,
+                InputReply::Csi {
+                    final_byte: 'c',
+                    ..
+                }
+            )
         })
     {
         outcome.stray.retain(|kept| kept != &reply);

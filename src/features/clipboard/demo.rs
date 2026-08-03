@@ -472,11 +472,10 @@ fn step_detect(ctx: &mut Ctx<'_>) -> Result<Flow> {
     )?;
     ctx.blank();
 
-    let attributes = ctx
-        .outcome
-        .attributes
-        .clone()
-        .map_or_else(|| "nothing came back".to_owned(), |text| format!("CSI ?{text} c"));
+    let attributes = ctx.outcome.attributes.clone().map_or_else(
+        || "nothing came back".to_owned(),
+        |text| format!("CSI ?{text} c"),
+    );
     let line = format!(
         "{}  {}",
         ctx.theme.paint("answer", Ink::Accent),
@@ -492,7 +491,10 @@ fn step_detect(ctx: &mut Ctx<'_>) -> Result<Flow> {
             "no 52, but the terminal named itself and the support matrix says writes work",
             Ink::Good,
         ),
-        Support::No => ("the matrix says this terminal does not implement it", Ink::Bad),
+        Support::No => (
+            "the matrix says this terminal does not implement it",
+            Ink::Bad,
+        ),
         Support::Unknown => (
             "no 52 — which settles nothing, since xterm has implemented this since long before \
              the extension existed",
@@ -562,8 +564,10 @@ fn step_copy(ctx: &mut Ctx<'_>) -> Result<Flow> {
                     .write_now(&sequence::set(Selection::Clipboard, MARKER.as_bytes()))?;
                 ctx.copied = true;
                 ctx.blank();
-                ctx.para("Sent. Paste it somewhere — Ctrl-V, or the middle mouse button if you \
-                          ask for the primary selection instead.")?;
+                ctx.para(
+                    "Sent. Paste it somewhere — Ctrl-V, or the middle mouse button if you \
+                          ask for the primary selection instead.",
+                )?;
                 ctx.blank();
                 ctx.note(
                     "Nothing came back and nothing will: this half of the protocol has no \
@@ -643,8 +647,10 @@ fn step_hazard(ctx: &mut Ctx<'_>) -> Result<Flow> {
     let poison = "echo pwned\n";
     ctx.indented(
         2,
-        &ctx.theme
-            .paint(&pretty(&sequence::set(Selection::Clipboard, poison.as_bytes())), Ink::Code),
+        &ctx.theme.paint(
+            &pretty(&sequence::set(Selection::Clipboard, poison.as_bytes())),
+            Ink::Code,
+        ),
     )?;
     ctx.blank();
     ctx.para(
@@ -689,9 +695,18 @@ fn step_leave(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.blank();
     for (command, what) in [
         ("escapade clipboard copy 'text'", "copy, from anywhere"),
-        ("git rev-parse HEAD | escapade clipboard copy", "the usual shape"),
-        ("escapade clipboard probe", "a shell predicate: 0 yes, 1 no, 2 cannot tell"),
-        ("escapade clipboard explain", "the whole protocol, and who implements what"),
+        (
+            "git rev-parse HEAD | escapade clipboard copy",
+            "the usual shape",
+        ),
+        (
+            "escapade clipboard probe",
+            "a shell predicate: 0 yes, 1 no, 2 cannot tell",
+        ),
+        (
+            "escapade clipboard explain",
+            "the whole protocol, and who implements what",
+        ),
     ] {
         let line = format!(
             "{}  {}",
@@ -728,9 +743,24 @@ mod tests {
 
     #[test]
     fn steps_are_selectable_by_name_and_by_prefix() {
-        assert_eq!(STEPS[select_steps(&step_names(), Some("copy"), None).unwrap().start].name, "copy");
-        assert_eq!(STEPS[select_steps(&step_names(), Some("anat"), None).unwrap().start].name, "anatomy");
-        assert_eq!(STEPS[select_steps(&step_names(), None, Some(999)).unwrap().start].name, "restore");
+        assert_eq!(
+            STEPS[select_steps(&step_names(), Some("copy"), None)
+                .unwrap()
+                .start]
+                .name,
+            "copy"
+        );
+        assert_eq!(
+            STEPS[select_steps(&step_names(), Some("anat"), None)
+                .unwrap()
+                .start]
+                .name,
+            "anatomy"
+        );
+        assert_eq!(
+            STEPS[select_steps(&step_names(), None, Some(999)).unwrap().start].name,
+            "restore"
+        );
     }
 
     #[test]

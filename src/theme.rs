@@ -96,11 +96,14 @@ impl Theme {
     /// a terminal.
     #[must_use]
     pub fn new(no_color_flag: bool) -> Self {
-        let color = !no_color_flag
-            && env::var_os("NO_COLOR").is_none()
-            && std::io::stdout().is_terminal();
+        let color =
+            !no_color_flag && env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal();
         let width = detect_width();
-        let skin = if color { styled_skin() } else { MadSkin::no_style() };
+        let skin = if color {
+            styled_skin()
+        } else {
+            MadSkin::no_style()
+        };
         Self { color, width, skin }
     }
 
@@ -135,7 +138,7 @@ impl Theme {
     /// color is off.
     ///
     /// The result contains escape sequences, so never measure it with `len()`
-    /// — use [`Theme::visible_width`].
+    /// — use [`crate::unicode::display_width`].
     #[must_use]
     pub fn paint(&self, text: &str, ink: Ink) -> String {
         if self.color {
@@ -205,7 +208,9 @@ fn styled_skin() -> MadSkin {
     skin.bold.add_attr(Attribute::Bold);
     skin.italic.set_fg(Ink::Warn.color());
     skin.inline_code.set_fgbg(Ink::Code.color(), gray(2));
-    skin.code_block.compound_style.set_fgbg(Ink::Code.color(), gray(2));
+    skin.code_block
+        .compound_style
+        .set_fgbg(Ink::Code.color(), gray(2));
     skin.bullet = termimad::StyledChar::from_fg_char(Ink::Accent.color(), '•');
     skin.quote_mark.set_fg(Ink::Accent.color());
     skin.table.compound_style.set_fg(gray(9));

@@ -94,14 +94,12 @@ fn contains_token(haystack: &str, token: &str) -> bool {
     let bytes = haystack.as_bytes();
     let token_bytes = token.as_bytes();
     let alnum = |byte: u8| byte.is_ascii_alphanumeric();
-    haystack
-        .match_indices(token)
-        .any(|(index, _)| {
-            let before_ok = index == 0 || !alnum(bytes[index - 1]);
-            let after = index + token_bytes.len();
-            let after_ok = after == bytes.len() || !alnum(bytes[after]);
-            before_ok && after_ok
-        })
+    haystack.match_indices(token).any(|(index, _)| {
+        let before_ok = index == 0 || !alnum(bytes[index - 1]);
+        let after = index + token_bytes.len();
+        let after_ok = after == bytes.len() || !alnum(bytes[after]);
+        before_ok && after_ok
+    })
 }
 
 /// Strips the `> |` introducer from an XTVERSION reply payload.

@@ -114,7 +114,14 @@ pub fn run(theme: &Theme, command: &ColorCommand) -> Result<ExitCode> {
     term.enable_raw()?;
 
     let notification = notify::probe(&mut term, &mut input)?;
-    let result = watch(theme, command, &mut term, &mut input, &targets, notification);
+    let result = watch(
+        theme,
+        command,
+        &mut term,
+        &mut input,
+        &targets,
+        notification,
+    );
 
     // Notification is terminal state, not output. Nothing else takes it down, so
     // it comes down here whether the loop ended by a keypress or by an error.
@@ -383,7 +390,10 @@ fn header(
         theme.paint("updates:", Ink::Muted),
         theme.paint(label, ink)
     );
-    for line in wrap(&notification.explain(POLL_INTERVAL), theme.width().saturating_sub(4)) {
+    for line in wrap(
+        &notification.explain(POLL_INTERVAL),
+        theme.width().saturating_sub(4),
+    ) {
         let _ = write!(out, "    {}\r\n", theme.paint(&line, Ink::Muted));
     }
     let _ = write!(

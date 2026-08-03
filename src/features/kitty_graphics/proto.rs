@@ -1323,7 +1323,9 @@ impl ErrorCode {
             Self::BadFile => "the terminal could not open the file, or it was not a regular file",
             Self::Cycle => "the relative placement would form a cycle",
             Self::TooBig => "the image is larger than the terminal allows",
-            Self::BadSequence => "the payload did not decode — bad base64, bad zlib, or the pixel count disagrees with the declared size",
+            Self::BadSequence => {
+                "the payload did not decode — bad base64, bad zlib, or the pixel count disagrees with the declared size"
+            }
             Self::Invalid => "the control data was rejected as invalid",
             Self::NoData => "the command referred to data that was never transmitted",
             Self::NotFound => "no image, placement or frame with that id — it needs retransmitting",
@@ -1533,7 +1535,10 @@ mod tests {
         );
         assert!(sequences[0].control.ends_with(",m=1"));
         assert_eq!(sequences[1].control, "m=1");
-        assert_eq!(sequences[2].control, "m=0", "the last chunk closes with m=0");
+        assert_eq!(
+            sequences[2].control, "m=0",
+            "the last chunk closes with m=0"
+        );
 
         for chunk in &sequences[..sequences.len() - 1] {
             assert_eq!(chunk.payload.len(), CHUNK_LIMIT);
@@ -1630,7 +1635,10 @@ mod tests {
         let placement = Placement::of_image(1)
             .with_source(Some(Rect::new(10, 20, 100, 50)))
             .with_area(Some(8), Some(4));
-        assert_eq!(place(&placement).control, "a=p,i=1,x=10,y=20,w=100,h=50,c=8,r=4");
+        assert_eq!(
+            place(&placement).control,
+            "a=p,i=1,x=10,y=20,w=100,h=50,c=8,r=4"
+        );
     }
 
     #[test]
@@ -1737,7 +1745,10 @@ mod tests {
             current_frame: Some(7),
             ..Animation::default()
         };
-        assert_eq!(animate(&animation).wire(), spec("<ESC>_Ga=a,i=3,c=7<ESC>\\"));
+        assert_eq!(
+            animate(&animation).wire(),
+            spec("<ESC>_Ga=a,i=3,c=7<ESC>\\")
+        );
 
         // <ESC>_Ga=a,i=7,r=3,z=48<ESC>\ — set the third frame's gap.
         assert_eq!(
@@ -1764,9 +1775,9 @@ mod tests {
         });
         let sequences = transmit(&command, None, &vec![0u8; 100 * 200 * 4]);
         assert!(
-            sequences[0].control.starts_with(
-                "a=f,f=32,s=100,v=200,i=1,x=10,y=5,c=1,z=48,X=1,Y=4278190335"
-            ),
+            sequences[0]
+                .control
+                .starts_with("a=f,f=32,s=100,v=200,i=1,x=10,y=5,c=1,z=48,X=1,Y=4278190335"),
             "{}",
             sequences[0].control
         );
@@ -1841,8 +1852,19 @@ mod tests {
     #[test]
     fn every_documented_error_code_round_trips() {
         for code in [
-            "EBADPNG", "EBADF", "ECYCLE", "EFBIG", "EILSEQ", "EINVAL", "ENODATA", "ENOENT",
-            "ENOMEM", "ENOPARENT", "ENOSPC", "EPERM", "ETOODEEP",
+            "EBADPNG",
+            "EBADF",
+            "ECYCLE",
+            "EFBIG",
+            "EILSEQ",
+            "EINVAL",
+            "ENODATA",
+            "ENOENT",
+            "ENOMEM",
+            "ENOPARENT",
+            "ENOSPC",
+            "EPERM",
+            "ETOODEEP",
         ] {
             let parsed = ErrorCode::parse(code);
             assert_eq!(parsed.as_str(), code);
@@ -1893,7 +1915,10 @@ mod tests {
         // And the payload really is elided.
         let shown = sequences[0].display(16);
         assert!(shown.contains("more base64 bytes"), "{shown}");
-        assert!(shown.len() < 200, "elided output should stay short: {shown}");
+        assert!(
+            shown.len() < 200,
+            "elided output should stay short: {shown}"
+        );
     }
 
     #[test]

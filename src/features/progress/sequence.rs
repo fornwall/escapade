@@ -572,7 +572,10 @@ mod tests {
     fn a_state_that_honours_a_percentage_carries_the_one_it_was_given() {
         for state in [State::Set, State::Error, State::Warning] {
             let report = Report::new(state, Some(Percent::clamping(55).0));
-            assert_eq!(report.sequence(), format!("{E}]9;4;{};55{E}\\", state.code()));
+            assert_eq!(
+                report.sequence(),
+                format!("{E}]9;4;{};55{E}\\", state.code())
+            );
             assert!(!report.omits_percent());
         }
     }

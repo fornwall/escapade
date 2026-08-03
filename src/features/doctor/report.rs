@@ -33,8 +33,15 @@ pub fn list(theme: &Theme, catalogue: &Catalogue) {
             theme.paint(&pad(&check.id, NAME_WIDTH), Ink::Code),
             theme.paint(&check.name, Ink::Strong)
         );
-        for line in crate::features::wrap(&check.question, theme.width().saturating_sub(NAME_WIDTH + 6)) {
-            println!("  {}{}", " ".repeat(NAME_WIDTH + 2), theme.paint(&line, Ink::Muted));
+        for line in crate::features::wrap(
+            &check.question,
+            theme.width().saturating_sub(NAME_WIDTH + 6),
+        ) {
+            println!(
+                "  {}{}",
+                " ".repeat(NAME_WIDTH + 2),
+                theme.paint(&line, Ink::Muted)
+            );
         }
     }
     println!();
@@ -46,7 +53,10 @@ pub fn list(theme: &Theme, catalogue: &Catalogue) {
     println!(
         "  {}  {}",
         theme.paint("data/checks.toml", Ink::Code),
-        theme.paint("is where they are defined — corrections welcome", Ink::Muted)
+        theme.paint(
+            "is where they are defined — corrections welcome",
+            Ink::Muted
+        )
     );
     println!();
 }
@@ -134,6 +144,10 @@ fn preamble(theme: &Theme, diagnosis: &Diagnosis<'_>) {
 }
 
 /// Anything that makes the whole run less trustworthy than it looks.
+#[allow(
+    clippy::too_many_lines,
+    reason = "a flat sequence of independent caveats; each is short and none depends on another"
+)]
 fn warnings(theme: &Theme, diagnosis: &Diagnosis<'_>) {
     let mut said_anything = false;
 
@@ -195,9 +209,14 @@ fn warnings(theme: &Theme, diagnosis: &Diagnosis<'_>) {
              answers mean what they say",
             decrqm::SENTINEL_MODE
         );
-        let mut lines = crate::features::wrap(&control, theme.width().saturating_sub(4)).into_iter();
+        let mut lines =
+            crate::features::wrap(&control, theme.width().saturating_sub(4)).into_iter();
         if let Some(first) = lines.next() {
-            println!("  {} {}", theme.paint("✔", Ink::Good), theme.paint(&first, Ink::Muted));
+            println!(
+                "  {} {}",
+                theme.paint("✔", Ink::Good),
+                theme.paint(&first, Ink::Muted)
+            );
         }
         for line in lines {
             println!("    {}", theme.paint(&line, Ink::Muted));
@@ -289,10 +308,7 @@ fn print_row(theme: &Theme, row: &Row<'_>) {
     }
     match row.agreement {
         Agreement::Disagree => {
-            line.push_str(&theme.paint(
-                &format!("  ⚠ {}", Agreement::Disagree.label()),
-                Ink::Bad,
-            ));
+            line.push_str(&theme.paint(&format!("  ⚠ {}", Agreement::Disagree.label()), Ink::Bad));
         }
         Agreement::NotComparable => {
             line.push_str(&theme.paint(
@@ -312,10 +328,7 @@ fn print_row(theme: &Theme, row: &Row<'_>) {
     let indent = " ".repeat(4);
     println!(
         "{indent}{}",
-        theme.paint(
-            &super::verdict::describe_split(&row.readings),
-            Ink::Bad
-        )
+        theme.paint(&super::verdict::describe_split(&row.readings), Ink::Bad)
     );
     for origin in Origin::ALL {
         let Some(reading) = row.reading(origin) else {
@@ -386,7 +399,10 @@ fn summary(theme: &Theme, diagnosis: &Diagnosis<'_>, only_disagreements: bool) {
 
     println!();
     let headline = if disagreements == 0 {
-        theme.paint(&format!("no disagreements across {total} checks"), Ink::Good)
+        theme.paint(
+            &format!("no disagreements across {total} checks"),
+            Ink::Good,
+        )
     } else {
         theme.paint(
             &format!(
@@ -399,9 +415,7 @@ fn summary(theme: &Theme, diagnosis: &Diagnosis<'_>, only_disagreements: bool) {
     let mut line = format!("  {headline}");
     if incomparable > 0 {
         line.push_str(&theme.paint(
-            &format!(
-                " · {incomparable} could not be compared, for want of a second source"
-            ),
+            &format!(" · {incomparable} could not be compared, for want of a second source"),
             Ink::Muted,
         ));
     }
@@ -414,7 +428,10 @@ fn summary(theme: &Theme, diagnosis: &Diagnosis<'_>, only_disagreements: bool) {
             (0, "every check ran and the sources agree")
         }
     } else {
-        (2, "the checks could not be run — there was no terminal to ask")
+        (
+            2,
+            "the checks could not be run — there was no terminal to ask",
+        )
     };
     println!(
         "  {} {}",
@@ -499,7 +516,11 @@ mod tests {
                     ],
                 };
                 let agreement = agreement(&readings);
-                Row { check, readings, agreement }
+                Row {
+                    check,
+                    readings,
+                    agreement,
+                }
             })
             .collect()
     }
@@ -508,7 +529,9 @@ mod tests {
         Diagnosis {
             rows,
             terminfo: terminfo::Source::Entry {
-                entry: Box::new(terminfo::parse("xterm-256color|xterm with 256 colors,\n\tam,\n")),
+                entry: Box::new(terminfo::parse(
+                    "xterm-256color|xterm with 256 colors,\n\tam,\n",
+                )),
                 queried: "xterm-256color".to_owned(),
             },
             channel: Some(Channel::Ctty),
@@ -591,14 +614,20 @@ mod tests {
 
     #[test]
     fn a_cell_is_coloured_by_what_it_says_and_whether_it_can_be_trusted() {
-        assert_eq!(cell_ink(&Claim::from_support(Support::Yes), true), Ink::Good);
+        assert_eq!(
+            cell_ink(&Claim::from_support(Support::Yes), true),
+            Ink::Good
+        );
         assert_eq!(cell_ink(&Claim::from_support(Support::No), true), Ink::Bad);
         assert_eq!(cell_ink(&Claim::Silent, true), Ink::Muted);
         assert_eq!(cell_ink(&Claim::NotApplicable, true), Ink::Muted);
         assert_eq!(cell_ink(&Claim::value("^?"), true), Ink::Strong);
         // Unreliable wins over everything: a green tick that means nothing is
         // worse than no tick at all.
-        assert_eq!(cell_ink(&Claim::from_support(Support::Yes), false), Ink::Warn);
+        assert_eq!(
+            cell_ink(&Claim::from_support(Support::Yes), false),
+            Ink::Warn
+        );
     }
 
     #[test]
@@ -622,7 +651,10 @@ mod tests {
         // Theme clamps to at least 40 columns; the name column plus four cells is
         // wider than that, so the header rule must not be built from the width.
         let width = NAME_WIDTH + CELL_WIDTH * Origin::ALL.len();
-        assert!(width > 40, "the rule is drawn from the columns, not the terminal");
+        assert!(
+            width > 40,
+            "the rule is drawn from the columns, not the terminal"
+        );
         assert_eq!(width, 20 + 56);
     }
 
@@ -631,7 +663,11 @@ mod tests {
         let catalogue = catalogue();
         for check in catalogue.checks() {
             assert!(!check.question.is_empty(), "{}", check.id);
-            assert!(check.id.chars().count() <= NAME_WIDTH, "{} is too wide", check.id);
+            assert!(
+                check.id.chars().count() <= NAME_WIDTH,
+                "{} is too wide",
+                check.id
+            );
         }
     }
 }

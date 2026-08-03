@@ -147,9 +147,9 @@ pub fn parse_foreground(params: &str) -> Readback {
                 .collect();
             return match parts[1].trim() {
                 "2" => triple(&numbers),
-                "5" => numbers.first().map_or(Readback::NoColor, |&index| {
-                    Readback::Indexed(index)
-                }),
+                "5" => numbers
+                    .first()
+                    .map_or(Readback::NoColor, |&index| Readback::Indexed(index)),
                 _ => Readback::NoColor,
             };
         }
@@ -256,7 +256,10 @@ pub fn interpret_cell_size(round: &Round) -> Option<CellSize> {
 
     for reply in &round.replies {
         match reply {
-            Reply::Csi { params, final_byte: 't' } => {
+            Reply::Csi {
+                params,
+                final_byte: 't',
+            } => {
                 // `CSI 6 ; height ; width t`, `CSI 4 ; height ; width t`,
                 // `CSI 8 ; height ; width t` — height always precedes width.
                 let mut fields = params.split(';').map(str::trim);
@@ -282,10 +285,18 @@ pub fn interpret_cell_size(round: &Round) -> Option<CellSize> {
     }
 
     if let Some((width, height)) = from_16t.filter(|&(w, h)| w > 0.0 && h > 0.0) {
-        return Some(CellSize { width, height, rung: Rung::Csi16t });
+        return Some(CellSize {
+            width,
+            height,
+            rung: Rung::Csi16t,
+        });
     }
     if let Some((width, height)) = from_iterm2.filter(|&(w, h)| w > 0.0 && h > 0.0) {
-        return Some(CellSize { width, height, rung: Rung::ITerm2 });
+        return Some(CellSize {
+            width,
+            height,
+            rung: Rung::ITerm2,
+        });
     }
     // Dividing is last because it rounds: a 1918-pixel text area 80 cells wide
     // gives 23.975, and the true cell width is 24 with two columns of padding.
@@ -367,7 +378,10 @@ pub fn interpret_identity(round: &Round) -> Identity {
                     identity.xtversion = Some(text.to_owned());
                 }
             }
-            Reply::Csi { params, final_byte: 'c' } => {
+            Reply::Csi {
+                params,
+                final_byte: 'c',
+            } => {
                 if params.starts_with('>') {
                     identity.da2 = Some(params.clone());
                 } else {
@@ -386,10 +400,7 @@ pub fn interpret_identity(round: &Round) -> Identity {
 /// where it disagrees with `TERM` it is the one to believe.
 #[must_use]
 pub fn observed_family(identity: &Identity) -> Option<&'static str> {
-    identity
-        .xtversion
-        .as_deref()
-        .and_then(identity::family)
+    identity.xtversion.as_deref().and_then(identity::family)
 }
 
 /// A one-line summary of everything the identity round heard.
@@ -476,9 +487,7 @@ pub fn parse_stty_erase(text: &str) -> Erase {
         return Erase::NotReported;
     };
     let rest = &text[at..];
-    let end = rest
-        .find([';', '\n'])
-        .unwrap_or(rest.len());
+    let end = rest.find([';', '\n']).unwrap_or(rest.len());
     let raw = rest[..end].trim().to_owned();
     match canonical_erase(&raw) {
         Some(canonical) => Erase::Found {
@@ -567,8 +576,14 @@ mod tests {
     fn the_sgr_query_sets_a_triple_and_puts_the_colour_back() {
         let query = sgr_readback_query();
         assert!(query.contains("38;2;1;2;3m"), "{query:?}");
-        assert!(query.contains("\u{1b}P$qm\u{1b}\\"), "DECRQSS for SGR: {query:?}");
-        assert!(query.ends_with("\u{1b}[0m"), "the colour must be reset: {query:?}");
+        assert!(
+            query.contains("\u{1b}P$qm\u{1b}\\"),
+            "DECRQSS for SGR: {query:?}"
+        );
+        assert!(
+            query.ends_with("\u{1b}[0m"),
+            "the colour must be reset: {query:?}"
+        );
     }
 
     #[test]
@@ -577,10 +592,7 @@ mod tests {
             parse_decrpss("1$r0;38;2;1;2;3m"),
             Some((Some(1), "0;38;2;1;2;3".to_owned()))
         );
-        assert_eq!(
-            parse_decrpss("0$r0m"),
-            Some((Some(0), "0".to_owned()))
-        );
+        assert_eq!(parse_decrpss("0$r0m"), Some((Some(0), "0".to_owned())));
         // A reply with no status digits at all.
         assert_eq!(parse_decrpss("$r0m"), Some((None, "0".to_owned())));
     }
@@ -715,15 +727,18 @@ mod tests {
     #[test]
     fn dividing_the_text_area_is_the_last_rung() {
         // Alacritty and VTE skip `CSI 16 t`, so this is the only rung left.
-        let size = interpret_cell_size(&round(vec![csi("4;384;640", 't'), csi("8;24;80", 't')]))
-            .unwrap();
+        let size =
+            interpret_cell_size(&round(vec![csi("4;384;640", 't'), csi("8;24;80", 't')])).unwrap();
         assert_eq!(size.rung, Rung::Divided);
         assert_eq!(size.label(), "8x16");
     }
 
     #[test]
     fn dividing_needs_both_halves() {
-        assert_eq!(interpret_cell_size(&round(vec![csi("4;384;640", 't')])), None);
+        assert_eq!(
+            interpret_cell_size(&round(vec![csi("4;384;640", 't')])),
+            None
+        );
         assert_eq!(interpret_cell_size(&round(vec![csi("8;24;80", 't')])), None);
         // A zero cell count would divide by zero and report infinity.
         assert_eq!(

@@ -24,16 +24,31 @@ pub fn render(theme: &Theme, sizes: &Sizes) {
     println!();
 
     match sizes.cells() {
-        Some(cells) => row(theme, "cells", &format!("{} × {}", cells.horizontal, cells.vertical), cells.origin.describe()),
+        Some(cells) => row(
+            theme,
+            "cells",
+            &format!("{} × {}", cells.horizontal, cells.vertical),
+            cells.origin.describe(),
+        ),
         None => row(theme, "cells", "unavailable", &no_cells_reason(sizes)),
     }
     match sizes.window() {
         Some(window) => row(theme, "window", &pixels(window), window.origin.describe()),
-        None => row(theme, "window", "unavailable", &no_pixels_reason(sizes, "CSI 14 t")),
+        None => row(
+            theme,
+            "window",
+            "unavailable",
+            &no_pixels_reason(sizes, "CSI 14 t"),
+        ),
     }
     match sizes.cell() {
         Some(cell) => row(theme, "cell", &pixels(cell), cell.origin.describe()),
-        None => row(theme, "cell", "unavailable", &no_pixels_reason(sizes, "CSI 16 t")),
+        None => row(
+            theme,
+            "cell",
+            "unavailable",
+            &no_pixels_reason(sizes, "CSI 16 t"),
+        ),
     }
 
     for note in notes(sizes) {
@@ -214,7 +229,9 @@ mod tests {
         assert!(line.ends_with('\n'), "one object, one line");
         assert!(line.contains("\"feature\":\"dimensions\""));
         assert!(line.contains("\"cells\":{\"cols\":80,\"rows\":24,\"source\":\"tiocgwinsz\"}"));
-        assert!(line.contains("\"window\":{\"width\":800,\"height\":480,\"source\":\"tiocgwinsz\"}"));
+        assert!(
+            line.contains("\"window\":{\"width\":800,\"height\":480,\"source\":\"tiocgwinsz\"}")
+        );
         assert!(line.contains("\"cell\":{\"width\":10,\"height\":20,\"source\":\"derived\"}"));
         assert!(line.contains("\"multiplexer\":null"));
         assert!(line.contains("\"interactive\":true"));
@@ -233,7 +250,10 @@ mod tests {
         let line = json_line(&sizes);
         assert!(line.contains("\"window\":null"), "{line}");
         assert!(line.contains("\"cell\":null"), "{line}");
-        assert!(!line.contains(":0"), "a zero would read as a measurement: {line}");
+        assert!(
+            !line.contains(":0"),
+            "a zero would read as a measurement: {line}"
+        );
     }
 
     #[test]
@@ -308,9 +328,19 @@ mod tests {
             ..everything()
         };
         let reported = notes(&sizes);
-        assert!(reported.iter().any(|note| note.contains("disagree")), "{reported:?}");
-        assert!(reported.iter().any(|note| note.contains("100 × 30")), "{reported:?}");
-        assert!(notes(&everything()).iter().all(|note| !note.contains("disagree")));
+        assert!(
+            reported.iter().any(|note| note.contains("disagree")),
+            "{reported:?}"
+        );
+        assert!(
+            reported.iter().any(|note| note.contains("100 × 30")),
+            "{reported:?}"
+        );
+        assert!(
+            notes(&everything())
+                .iter()
+                .all(|note| !note.contains("disagree"))
+        );
     }
 
     #[test]
@@ -320,7 +350,10 @@ mod tests {
             ..everything()
         };
         let inside = notes(&with_pixels);
-        assert!(inside.iter().any(|note| note.contains("its own emulator")), "{inside:?}");
+        assert!(
+            inside.iter().any(|note| note.contains("its own emulator")),
+            "{inside:?}"
+        );
 
         let without = Sizes {
             multiplexer: Some(Multiplexer::Tmux),
@@ -329,7 +362,9 @@ mod tests {
         };
         let no_pixels = notes(&without);
         assert!(
-            no_pixels.iter().any(|note| note.contains("no pixel size to report")),
+            no_pixels
+                .iter()
+                .any(|note| note.contains("no pixel size to report")),
             "{no_pixels:?}"
         );
     }
@@ -343,8 +378,15 @@ mod tests {
             ..everything()
         };
         let reported = notes(&sizes);
-        assert!(reported.iter().any(|note| note.contains("Alacritty")), "{reported:?}");
+        assert!(
+            reported.iter().any(|note| note.contains("Alacritty")),
+            "{reported:?}"
+        );
         // But not when everything is known — there is nothing to excuse.
-        assert!(notes(&everything()).iter().all(|note| !note.contains("Alacritty")));
+        assert!(
+            notes(&everything())
+                .iter()
+                .all(|note| !note.contains("Alacritty"))
+        );
     }
 }

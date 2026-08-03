@@ -261,7 +261,10 @@ pub fn json_line(bytes: &[u8], event: &Event) -> String {
             fields.push(format!("\"text\":\"{}\"", escape_json(text)));
         }
         Event::Reply(reply) => {
-            fields.push(format!("\"reply\":\"{}\"", escape_json(&describe_reply(reply))));
+            fields.push(format!(
+                "\"reply\":\"{}\"",
+                escape_json(&describe_reply(reply))
+            ));
         }
         Event::Mouse(mouse) => {
             fields.push(format!("\"mouse\":\"{:?}\"", mouse.kind));
@@ -449,7 +452,11 @@ mod tests {
         let line = json_line(b"\x1b[200~he\"llo\n\x1b[201~", &event);
         assert!(line.contains("\\\"llo"), "{line}");
         assert!(line.contains("\\u000a"), "{line}");
-        assert_eq!(line.matches('\n').count(), 1, "only the terminating newline");
+        assert_eq!(
+            line.matches('\n').count(),
+            1,
+            "only the terminating newline"
+        );
     }
 
     #[test]

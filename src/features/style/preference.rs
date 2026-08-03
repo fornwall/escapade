@@ -73,9 +73,7 @@ impl ColorPreference {
         Self {
             // Present *and* non-empty. Not parsed, not compared against "0" or
             // "false": the specification says "regardless of its value".
-            suppressed: value
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned),
+            suppressed: value.filter(|value| !value.is_empty()).map(str::to_owned),
         }
     }
 

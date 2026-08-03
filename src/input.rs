@@ -456,7 +456,10 @@ fn parse_escape(buf: &[u8]) -> ParseOutcome {
             ParseOutcome::Event { event, consumed } => match event {
                 Event::Key(key) => done(
                     Event::Key(KeyEvent {
-                        mods: Modifiers { alt: true, ..key.mods },
+                        mods: Modifiers {
+                            alt: true,
+                            ..key.mods
+                        },
                         ..key
                     }),
                     consumed + 1,
@@ -775,10 +778,7 @@ fn parse_paste(buf: &[u8], body_start: usize) -> ParseOutcome {
     match find(body, PASTE_END) {
         Some(offset) => {
             let text = String::from_utf8_lossy(&body[..offset]).into_owned();
-            done(
-                Event::Paste(text),
-                body_start + offset + PASTE_END.len(),
-            )
+            done(Event::Paste(text), body_start + offset + PASTE_END.len())
         }
         None => ParseOutcome::Incomplete,
     }
@@ -882,9 +882,11 @@ fn kitty_key_code(number: u32) -> Option<KeyCode> {
 /// X10, which cannot say which button came up.
 fn parse_sgr_mouse(buf: &[u8], csi: &Csi<'_>) -> ParseOutcome {
     let fields = Fields::new(csi.params);
-    let (Some(button_mask), Some(col), Some(row)) =
-        (fields.number(0, 0), fields.number(1, 0), fields.number(2, 0))
-    else {
+    let (Some(button_mask), Some(col), Some(row)) = (
+        fields.number(0, 0),
+        fields.number(1, 0),
+        fields.number(2, 0),
+    ) else {
         return unknown(buf, csi.len);
     };
     let (Ok(col), Ok(row)) = (u16::try_from(col), u16::try_from(row)) else {
@@ -1656,7 +1658,10 @@ mod tests {
             &mouse(MouseKind::Up(MouseButton::Left), 1, 1, NONE),
         );
         // Wheel up.
-        check(b"\x1b[M\x60\x21\x21", &mouse(MouseKind::ScrollUp, 1, 1, NONE));
+        check(
+            b"\x1b[M\x60\x21\x21",
+            &mouse(MouseKind::ScrollUp, 1, 1, NONE),
+        );
         // Coordinate bytes above ASCII: column 200 is 200 + 32 = 232 (0xe8).
         check(
             &[ESC, b'[', b'M', 0x20, 0xe8, 0x21],
@@ -1700,16 +1705,10 @@ mod tests {
             &Event::Paste("hello".to_owned()),
         );
         // Newlines and escapes inside the paste body are just text.
-        check(
-            b"\x1b[200~a\nb\x1b[201~",
-            &Event::Paste("a\nb".to_owned()),
-        );
+        check(b"\x1b[200~a\nb\x1b[201~", &Event::Paste("a\nb".to_owned()));
         check(b"\x1b[200~\x1b[201~", &Event::Paste(String::new()));
         // Without the closing marker there is nothing to hand out yet.
-        assert_eq!(
-            parse_event(b"\x1b[200~partial"),
-            ParseOutcome::Incomplete
-        );
+        assert_eq!(parse_event(b"\x1b[200~partial"), ParseOutcome::Incomplete);
         // Trailing bytes after the paste are left for the next parse.
         assert_eq!(
             parse_event(b"\x1b[200~hi\x1b[201~x"),
@@ -1832,10 +1831,7 @@ mod tests {
                 b"\x1b[M\x20\x21\x21",
                 mouse(MouseKind::Down(MouseButton::Left), 1, 1, NONE),
             ),
-            (
-                b"\x1b[200~hi\x1b[201~",
-                Event::Paste("hi".to_owned()),
-            ),
+            (b"\x1b[200~hi\x1b[201~", Event::Paste("hi".to_owned())),
             (
                 b"\x1b_25a1;s;fmt=glyf\x1b\\",
                 Event::Reply(Reply::Apc("25a1;s;fmt=glyf".to_owned())),
@@ -1995,9 +1991,6 @@ mod tests {
         }
         // Escape needs the stall timeout in a real reader, but once decoded as
         // a key it quits.
-        assert_eq!(
-            classify(&key(KeyCode::Esc, NONE)),
-            Some(Advance::Quit)
-        );
+        assert_eq!(classify(&key(KeyCode::Esc, NONE)), Some(Advance::Quit));
     }
 }

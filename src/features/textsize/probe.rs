@@ -496,7 +496,13 @@ impl<'a> Measurer<'a> {
         let reply = self
             .input
             .wait_for_reply(REPLY_TIMEOUT, |reply| {
-                matches!(reply, Reply::Csi { final_byte: 'R', .. })
+                matches!(
+                    reply,
+                    Reply::Csi {
+                        final_byte: 'R',
+                        ..
+                    }
+                )
             })
             .ok()
             .flatten();
@@ -560,7 +566,13 @@ pub fn probe(term: &mut Term, input: &mut InputReader, keys: &[Key]) -> Result<P
     // difference between "unknown" and "unknown, and here is why".
     term.write_now(&barrier())?;
     if let Ok(Some(_)) = input.wait_for_reply(DRAIN_TIMEOUT, |reply| {
-        matches!(reply, Reply::Csi { final_byte: 'c', .. })
+        matches!(
+            reply,
+            Reply::Csi {
+                final_byte: 'c',
+                ..
+            }
+        )
     }) {
         outcome.answered_barrier = true;
     }
@@ -823,7 +835,10 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
         println!(
             "  {} {}",
             theme.paint("warning:", Ink::Warn),
-            theme.paint("text sent through OSC 66 is lost here, not merely unsized", Ink::Warn)
+            theme.paint(
+                "text sent through OSC 66 is lost here, not merely unsized",
+                Ink::Warn
+            )
         );
         note(
             theme,
@@ -876,7 +891,10 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
     println!(
         "  {} {}",
         theme.paint("escapade textsize explain", Ink::Code),
-        theme.paint("for what this protocol is and who implements it", Ink::Muted)
+        theme.paint(
+            "for what this protocol is and who implements it",
+            Ink::Muted
+        )
     );
     println!();
 }
@@ -935,7 +953,12 @@ mod tests {
         let report = measured(Key::Width, 1);
         assert_eq!(report.verdict(), Verdict::Ignored);
         assert_eq!(report.support(), Support::No);
-        assert!(report.verdict().explanation(Key::Width).contains("still appears"));
+        assert!(
+            report
+                .verdict()
+                .explanation(Key::Width)
+                .contains("still appears")
+        );
     }
 
     #[test]
@@ -1081,7 +1104,11 @@ mod tests {
             Key::VerticalAlign,
             Key::HorizontalAlign,
         ] {
-            assert!(key.detection().is_none(), "{} is not measurable", key.letter());
+            assert!(
+                key.detection().is_none(),
+                "{} is not measurable",
+                key.letter()
+            );
             assert!(!Key::MEASURABLE.contains(&key));
         }
     }

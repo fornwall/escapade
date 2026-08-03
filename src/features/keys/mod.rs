@@ -222,10 +222,7 @@ impl Flags {
     /// The specifications of the flags that are set, lowest bit first.
     #[must_use]
     pub fn specs(self) -> Vec<&'static FlagSpec> {
-        FLAGS
-            .iter()
-            .filter(|spec| self.0 & spec.bit != 0)
-            .collect()
+        FLAGS.iter().filter(|spec| self.0 & spec.bit != 0).collect()
     }
 
     /// The names of the flags that are set, lowest bit first.
@@ -493,7 +490,10 @@ mod tests {
             Flags::from_bits(0b0011).names(),
             vec!["disambiguate escape codes", "report event types"]
         );
-        assert_eq!(Flags::from_bits(0b1_0000).names(), vec!["report associated text"]);
+        assert_eq!(
+            Flags::from_bits(0b1_0000).names(),
+            vec!["report associated text"]
+        );
         assert_eq!(Flags::ALL.names().len(), 5);
         // Flags are listed lowest bit first, whatever order the bits arrived in.
         let names = Flags::from_bits(0b1_0101).names();
@@ -556,31 +556,39 @@ mod tests {
     #[test]
     fn only_the_flags_reply_is_the_flags_reply() {
         // Primary Device Attributes: same private prefix, different final byte.
-        assert!(parse_query_reply(&Reply::Csi {
-            params: "?62;4".to_owned(),
-            final_byte: 'c',
-        })
-        .is_none());
+        assert!(
+            parse_query_reply(&Reply::Csi {
+                params: "?62;4".to_owned(),
+                final_byte: 'c',
+            })
+            .is_none()
+        );
         // A key event has no private prefix, so it never reaches this parser as
         // a reply at all — but be explicit about it anyway.
-        assert!(parse_query_reply(&Reply::Csi {
-            params: "13;2".to_owned(),
-            final_byte: 'u',
-        })
-        .is_none());
+        assert!(
+            parse_query_reply(&Reply::Csi {
+                params: "13;2".to_owned(),
+                final_byte: 'u',
+            })
+            .is_none()
+        );
         // Junk in the parameter is not a flag set.
-        assert!(parse_query_reply(&Reply::Csi {
-            params: "?1;2".to_owned(),
-            final_byte: 'u',
-        })
-        .is_none());
+        assert!(
+            parse_query_reply(&Reply::Csi {
+                params: "?1;2".to_owned(),
+                final_byte: 'u',
+            })
+            .is_none()
+        );
         // A reply too large for the five defined bits to fit in a `u8` is not
         // silently truncated to something plausible.
-        assert!(parse_query_reply(&Reply::Csi {
-            params: "?9999".to_owned(),
-            final_byte: 'u',
-        })
-        .is_none());
+        assert!(
+            parse_query_reply(&Reply::Csi {
+                params: "?9999".to_owned(),
+                final_byte: 'u',
+            })
+            .is_none()
+        );
         assert!(parse_query_reply(&Reply::Apc("25a1;s".to_owned())).is_none());
         assert!(is_query_reply(&Reply::Csi {
             params: "?5".to_owned(),

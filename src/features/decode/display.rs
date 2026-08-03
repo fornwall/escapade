@@ -203,7 +203,10 @@ mod tests {
     #[test]
     fn spell_names_the_introducers_the_way_the_database_writes_them() {
         assert_eq!(
-            spell("\u{1b}[", &["?".to_owned(), "1049".to_owned(), "h".to_owned()]),
+            spell(
+                "\u{1b}[",
+                &["?".to_owned(), "1049".to_owned(), "h".to_owned()]
+            ),
             "CSI ? 1049 h"
         );
         assert_eq!(

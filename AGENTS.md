@@ -1,104 +1,136 @@
-# Agent status
+# Working in this repo
 
-Who built what, and what is actually finished. Written by the coordinating agent
-from **observed repository state** — test counts from `cargo test`, data-file sizes
-from disk — rather than from claims. Where an agent never reported, that is said
-explicitly.
+`escapade` documents, probes and demonstrates modern terminal escape-sequence
+features. Every feature has a TOML file in `data/features/` and a module in
+`src/features/`, and exposes the same verbs: `explain`, `probe` and — where it
+makes sense — `demo`.
 
-Fourteen features were built in parallel by separate agents. Ten agents were
-terminated mid-work by an API session limit at one point and several more by
-transient server errors; most were resumed and finished, some were not.
+This file is for someone **changing code**. `CONTRIBUTING.md` is for someone
+fixing a support matrix, which needs no Rust at all; `README.md` is for someone
+using the tool. `CLAUDE.md` is a symlink to this file.
 
-## Repository state
+## Build, test, lint
 
-| check | result |
+```console
+$ cargo build
+$ cargo test                   # everything pure; no test may require a terminal
+$ cargo clippy --all-targets   # must be clean, not merely compiling
+$ cargo fmt
+$ cargo run -- <subcommand>
+```
+
+The toolchain is pinned in `rust-toolchain.toml`, and the same version is the
+MSRV in `Cargo.toml` and `clippy.toml`. A change is not done until
+`cargo clippy --all-targets` is clean.
+
+Data files are embedded with `include_str!`, but an overlay directory wins over
+the embedded copies at runtime, so prose edits need no rebuild:
+
+```console
+$ ESCAPADE_DATA_DIR=./data cargo run -- glyph explain
+```
+
+## Layout
+
+| path | what it is |
 | --- | --- |
-| `cargo test` | **1,616 passing, 0 failing** |
-| `cargo check` | clean |
-| `cargo clippy --all-targets` | **clean** |
+| `src/main.rs` | Dispatch, panic hook, process exit status. |
+| `src/cli.rs` | The whole clap tree. |
+| `src/db.rs` | The feature database: loads `data/`, embeds it, rejects unknown terminal ids at startup. |
+| `src/term.rs` | Raw mode, alternate screen, private modes, multiplexer detection, `pretty`. |
+| `src/input.rs` | Parses what the terminal *sends* — keys, mouse reports, replies. `InputReader::drain` and `wait_for_reply` live here. |
+| `src/decrqm.rs` | Shared DECRQM/DECRPM protocol: the five DECRPM states, the impossible-mode sentinel, the report parser. Features keep their own *interpretation* of a mode; the protocol is not theirs to copy. |
+| `src/theme.rs` | Colour and markdown rendering. |
+| `src/unicode.rs` | Codepoint names, categories, widths, grapheme clustering. |
+| `src/features/` | One module per feature. `explain.rs` is the shared renderer; `mod.rs` holds `Support`, the operand helpers and `subcommand_for`. |
+| `data/features/*.toml` | One file per feature — the prose and the support matrix. |
+| `data/terminals.toml` | The terminal registry every support row's id must exist in. |
+| `data/checks.toml` | `doctor`'s check list. |
 
-## Complete
+Note that `src/input.rs` parses the grammar a *terminal* emits, while
+`src/features/decode/parse.rs` parses the grammar an *application* emits. They
+are different grammars; do not merge them.
 
-Implementation, data file and tests all present. The data-file column is its line
-count; a placeholder is 11 lines, so these are all real.
+## Adding a feature
 
-| feature | tests | data file | notes |
-| --- | --- | --- | --- |
-| `glyph_protocol` | 66 | 298 | The Glyph Protocol. Hand-written `glyf` encoder with a byte-level walkthrough, braille outline visualiser, 12-step demo ending in a live glyph editor and a playable game. The **reference implementation of the probe contract**. |
-| `kitty_graphics` | 228 | 592 | Kitty graphics. `render` for PNG/JPEG/GIF/WebP/SVG/DOT/flame graphs, three-stage input sniffer, six procedural shapes as demo steps, and delivery method (`t=f`/`t=t`/`o=z`/`t=d`) chosen from *probed* capability rather than a flag. |
-| `grapheme` | 119 | 435 | Mode 2027. Cursor-position measurement is the primitive; the mode query only a hint. Sentinel probe against an impossible mode, whose reliability finding is load-bearing — without it the demo could leave clustering on for whatever ran next. |
-| `doctor` | 193 | `data/checks.toml` | Diffs terminfo / XTGETTCAP / observed behaviour / environment across nine capabilities and reports disagreements. Verified against a pty harness impersonating four terminals including a deliberate liar. Found that an invalid name ends processing of an entire XTGETTCAP list, so it sends one name per query. |
-| `style` | 153 | 506 | The whole SGR family, generalised from an earlier `underline`. 24-bit colour where the colour *form* decides what `probe` measures; `NO_COLOR` handled by presence-and-non-emptiness; every verdict states its evidence, keeping capability separate from preference. |
-| `notification` | 90 | 457 | OSC 9 / 777 / 99. `Auto` picks the richest protocol the probe believes in and says which and why. `Safe` is the only text constructor, so hostile input cannot reach a sequence by accident. |
-| `progress` | 78 | 412 | OSC 9;4. Found that **`BEL` termination does not work** — VTE rejects it for this sequence while Microsoft's own tutorial uses it — and that out-of-range values diverge dangerously, so it clamps on the sending side. |
-| `decode` | 164 | n/a | Bytes back into named sequences. No data file by design; it is a tool, not a documented feature. **Its agent has not reported**, so the 164 tests are observed rather than attested. |
-| `dimensions` | 58 | 350 | Size in cells and pixels, with `probe --rows-at-least`-style thresholds. **Its agent never reported** — killed by the session limit — so completeness is inferred from the tests and data file. |
-| `hyperlink` | 56 | 476 | OSC 8. Percent-encodes URIs but *rejects* malformed `id`s, since an id's only job is to compare byte-equal against ids from other programs. Visible text gets Control Pictures stand-ins. |
-| `unscroll` | 31 | 296 | `CSI Ps + T`. **Disproved this project's own `TODO.md`** about the pager use case — see Corrections there. Found a third implementation (contour) that kitty's own page does not list. |
-| `clipboard` | 48 | 407 | OSC 52. The **only probe here whose measurement is free**: the clipboard extension puts `52` in the device-attributes reply, so the barrier every probe already sends carries the answer — and a conforming terminal must withdraw it when the user disables clipboard access, so it describes the session rather than a version. Reading is deliberately never probed: on Konsole the query *destroys* the clipboard, which `paste` refuses without `--force`. First module to reuse `doctor/identity.rs` instead of copying its table. |
-| `color` | 116 | 391 | OSC 4/10/11/12/17/19 and DEC mode 2031. The ~2,800 lines that were unreachable behind a `bail!` are now wired, plus the three modules that were missing: `notify` (the subscription), `probe` and `demo`. The **only probe here that measures rather than infers** — a colour query has a reply, so no support table is consulted. Compiling `report.rs` for the first time turned up a test that had never run and was wrong: pure red is *light*, at luminance 0.2126 against an L\* = 50 threshold of 0.1842. |
+`CONTRIBUTING.md` has the four registration steps and the module signature. What
+matters beyond them is that a feature module owns only its own behaviour:
 
-## Implementation done, data file still a placeholder
+* **`explain` is not yours to write.** Call `crate::features::explain::render`,
+  which builds the whole page from the database. This is what keeps features from
+  drifting apart in presentation, and it means adding a feature means writing
+  TOML rather than writing a renderer.
+* **`probe` is a predicate.** Silent unless `--format json|debug`; the answer is
+  the exit status, via `features::Support` — 0 yes, 1 no, 2 unknown. `Unknown`
+  must never collapse into `No`. `src/features/glyph_protocol/probe.rs` is the
+  reference implementation.
+* **`demo` is optional.** Not every feature has one, and `explain` must not claim
+  otherwise.
 
-The code and tests are there; `explain` will show almost nothing until the TOML is
-written.
+## Protocol conventions
 
-| feature | tests | data file | what is missing |
-| --- | --- | --- | --- |
-| `keys` | 68 | **11 lines** | The kitty keyboard protocol data file. Its agent was writing it — "the biggest piece of prose" — when the session limit hit, and never reported. Also unverified: whether the reusable **interactive-input construction** other demos were meant to adopt actually exists. |
-| `textsize` | 59 | **11 lines** | The text-sizing data file, including the per-key support picture (foot implements `w=` but not `s=`) that the whole feature's verdict model depends on. Its agent never reported. |
+These are load-bearing. Breaking one produces a tool that lies about terminals,
+which is worse than a tool that says nothing.
 
-## Not finished
+* **Pair every capability query with a Primary Device Attributes barrier**
+  (`CSI c`), so silence is distinguishable from slowness. But a **multiplexer
+  answers that barrier itself**, so inside one a barrier reply licenses no
+  negative verdict — see `features/dimensions/probe.rs` and
+  `features/glyph_protocol/probe.rs::ProbeOutcome::verdict`.
+* **Drain every reply you provoke.** An undrained reply is delivered to the
+  user's shell and printed as garbage.
+* **Shield every query a terminal might print.** The mirror of the drain rule, on
+  the output side. A terminal with no state for an APC, DCS or OSC control string
+  can print its body instead of discarding it, so wrap the query in
+  `crate::term::shielded` — see `src/term.rs`. `CSI`-only queries need no shield:
+  the control-sequence grammar is universal, so an unknown final byte is still
+  consumed.
+* **Distinguish *no* from *no answer*.** Most terminals implement almost none of
+  these queries; reading silence as a denial is the standard way to get this
+  wrong.
+* **Build escape sequences directly.** This code is meant to be readable as a
+  reference for the protocol, so a wrapper library would defeat the purpose.
+* **Name the sequence in the doc comment** of any protocol function:
+  ``/// Enables mouse reporting: `CSI ? 1000 h`.``
+* **Never print a codepoint without checking it is printable** — see
+  `glyph_protocol/supports.rs::rendered`. Emitting a raw `ESC` would run whatever
+  followed it.
+* **Text operands come from `features::text_operand` / `bytes_operand`**, which
+  implement the arguments-or-stdin convention and report the hang case rather
+  than blocking on it.
 
-Nothing. Every subcommand in `--help` now does something; `clipboard`, the last
-`bail!("not implemented yet")`, is in the table above.
+## Code conventions
 
-## Dropped
+* `unsafe_code` is forbidden. `clippy::all` and `clippy::pedantic` are warnings;
+  `unwrap_used` and `expect_used` are warnings outside tests.
+* Anything pure gets a unit test, in a `#[cfg(test)]` module in the same file.
+* Hostile input reaches a sequence only through a constructor that sanitizes it.
+  `notification`'s `Safe` is the pattern: make the safe constructor the only one.
 
-`capture` (`CSI 10 i` / `CSI 11 i` screen dumps) was implemented — 56 tests, an
-honest best-effort file harvest — and then **removed at the user's decision**: only
-xterm supports both forms and mintty only HTML, which is too narrow a base for a
-subcommand. Its findings are preserved under Corrections in `TODO.md`, because they
-cost real source-reading.
+## Data files
 
-## What to do next, in order
+`CONTRIBUTING.md` has the house rules — TOML literal strings, symbolic sequence
+names, no literal control bytes, no invisible characters. Tests enforce the last
+two. One rule that is easy to miss and not visible until it renders:
 
-1. **Write the `keys` and `textsize` data files.** Both features work; both
-   `explain` pages are empty. This is now the only unfinished work of its kind.
-2. **Settle the five `unknown` rows in `clipboard`'s matrix** — VS Code, GNU
-   Screen, ConEmu, Warp and wayst. Each says "not checked" rather than guessing;
-   GNU Screen's source could not be reached at all while the file was written.
-3. **Verify `color`'s support matrix.** Ten rows are `unknown` and say so, and
-   two `yes` rows (VTE, Konsole) cite a repository rather than a specific file.
-   Checking those against source is exactly the contribution `CONTRIBUTING.md`
-   asks for and needs no Rust.
-4. `TODO.md`'s "Known issues" — the top one is now that `escapade color`'s
-   one-shot report never asks for the colour scheme, so `--is-dark` decides from
-   luminance even where the terminal would have answered outright.
+* **One source line per paragraph.** termimad re-wraps each source line
+  independently, so pre-wrapped prose wraps twice and reads ragged.
 
-## Shared code
+## Findings already established
 
-`src/decrqm.rs` (18 tests) is the DECRQM protocol — the five DECRPM states, the
-impossible-mode sentinel that iTerm2 fails, and the report parser. It replaces
-two near-identical copies that had been carried in `doctor` and `grapheme` and
-had already drifted: one parsed DECRPM values as `u16`, so a terminal answering
-anything larger produced no report at all rather than an undefined one. Each
-feature keeps its own *interpretation* — what a reset mode 2027 means to a
-program measuring text is `grapheme`'s business, not the protocol's.
+Counterintuitive things that cost real source-reading, with where the reasoning
+lives. Do not re-derive these, and do not "fix" the code that looks wrong because
+of them.
 
-## A note on what these agents were good at
-
-The most valuable thing they produced was not code but **corrections**. Three
-separate agents disproved something this project had written down: that the DECRQSS
-success flag can be trusted (it cannot — DEC's own manuals had it reversed), that
-`unscroll` fixes the pager case (it does not), and that xterm resources gate the
-screen dumps (no resource does). A fourth disproved something *tmux's own manual
-page* implies — that `set-clipboard external` forwards an application's OSC 52. It
-does not: `input_osc_52_parse` returns immediately unless the option is `on`, so
-under the default nothing an application sends is looked at at all. Two also caught real bugs in the shared code —
-`explain.rs` advertising a `demo` verb for features that have none, and `main.rs`
-silently dropping `--no-color`.
-
-Where they were weakest was **self-verification under churn**: several reported
-test counts from isolated copies rather than the real tree, and one silently
-reverted a CLI fix in a file it had been told not to touch.
+| finding | recorded in |
+| --- | --- |
+| The DECRQSS valid/invalid status flag cannot be trusted — DEC's own manuals had it reversed, and a real VT420 confirmed the documented codes were the wrong way round. Branch on the reply's *content*. | `src/features/doctor/observe.rs` (`SgrReadback::advisory_flag`) |
+| A multiplexer answers the device-attributes barrier — and DECRQSS — from its own emulator, so neither says anything about the terminal underneath. | `src/features/dimensions/probe.rs`, `src/features/style/probe.rs` |
+| An invalid XTGETTCAP name ends processing of the whole list, so a batch silently loses everything after it. `doctor` sends one name per query. | `src/features/doctor/tcap.rs` |
+| iTerm2 answers DECRQM for modes that do not exist, so every DECRQM run first asks about an impossible sentinel mode. | `src/decrqm.rs` |
+| `OSC 9;4` progress must end with `ST`: VTE deliberately rejects `BEL` for this one sequence, while Microsoft's own tutorial uses it. | `src/features/progress/sequence.rs` |
+| tmux's `set-clipboard external` does **not** forward an application's OSC 52, despite what the manual implies — `input_osc_52_parse` returns immediately unless the value is `on`. | `data/features/clipboard.toml` |
+| Asking Konsole to *read* the clipboard destroys it: the query falls through to the write path and sets it empty. `paste` refuses there without `--force`. | `src/features/clipboard/probe.rs`, `data/features/clipboard.toml` |
+| Terminals advertise OSC 52 support by putting `52` in the Primary Device Attributes reply, and must withdraw it when the user disables clipboard access — so the barrier already carries the answer. Its *absence* still proves nothing. | `src/features/clipboard/probe.rs` |
+| Unscroll does not recover a pager's screen: on the alternate screen it degrades to `SD` and inserts blanks, and alternate-screen output never enters scrollback at all. | `src/features/unscroll/mod.rs`, `data/features/unscroll.toml` |
+| macOS Terminal.app consumes only the two-byte `ESC _` introducer of an APC string and prints the body as text, rather than discarding the string as ECMA-48 requires. Queries are shielded with autowrap off so a leak cannot wrap, and therefore cannot scroll — which is the case cursor-restore cannot undo. `nsterm` has no `ech`, so the erase is `CSI K`. | `src/term.rs` (`shielded`) |

@@ -619,7 +619,10 @@ mod tests {
         );
         // The closing form, and the BEL-terminated spelling, are the same feature.
         assert_eq!(features(&index, b"\x1b]8;;\x1b\\"), vec!["hyperlinks"]);
-        assert_eq!(features(&index, b"\x1b]8;;https://x\x07"), vec!["hyperlinks"]);
+        assert_eq!(
+            features(&index, b"\x1b]8;;https://x\x07"),
+            vec!["hyperlinks"]
+        );
     }
 
     #[test]
@@ -636,7 +639,10 @@ mod tests {
             features(&index, b"\x1b_Ga=T,f=100,i=42;AAAA\x1b\\"),
             vec!["kitty-graphics"]
         );
-        assert_eq!(features(&index, b"\x1b_25a1;s\x1b\\"), vec!["glyph-protocol"]);
+        assert_eq!(
+            features(&index, b"\x1b_25a1;s\x1b\\"),
+            vec!["glyph-protocol"]
+        );
         assert_eq!(
             features(&index, b"\x1b_25a1;q;cp=E0A0\x1b\\"),
             vec!["glyph-protocol"]
@@ -646,9 +652,18 @@ mod tests {
     #[test]
     fn csi_2027_is_grapheme_clustering_in_both_directions() {
         let index = index();
-        assert_eq!(features(&index, b"\x1b[?2027h"), vec!["grapheme-clustering"]);
-        assert_eq!(features(&index, b"\x1b[?2027l"), vec!["grapheme-clustering"]);
-        assert_eq!(features(&index, b"\x1b[?2027$p"), vec!["grapheme-clustering"]);
+        assert_eq!(
+            features(&index, b"\x1b[?2027h"),
+            vec!["grapheme-clustering"]
+        );
+        assert_eq!(
+            features(&index, b"\x1b[?2027l"),
+            vec!["grapheme-clustering"]
+        );
+        assert_eq!(
+            features(&index, b"\x1b[?2027$p"),
+            vec!["grapheme-clustering"]
+        );
     }
 
     #[test]
@@ -705,7 +720,10 @@ mod tests {
         // tells a transmit from a query.
         let index = index();
         for (bytes, expected) in [
-            (&b"\x1b_Ga=T,f=100,i=42;AAAA\x1b\\"[..], "Transmit and display"),
+            (
+                &b"\x1b_Ga=T,f=100,i=42;AAAA\x1b\\"[..],
+                "Transmit and display",
+            ),
             (b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\", "Query"),
             (b"\x1b_Ga=d,d=i,i=42\x1b\\", "Delete"),
             (b"\x1b_25a1;s\x1b\\", "Support"),
@@ -729,8 +747,14 @@ mod tests {
     fn an_unclaimed_sequence_matches_nothing() {
         let index = index();
         assert!(features(&index, b"\x1b[3A").is_empty(), "cursor movement");
-        assert!(features(&index, b"\x1b]0;title\x07").is_empty(), "window title");
-        assert!(features(&index, b"\x1b_Zunknown\x1b\\").is_empty(), "an unknown APC");
+        assert!(
+            features(&index, b"\x1b]0;title\x07").is_empty(),
+            "window title"
+        );
+        assert!(
+            features(&index, b"\x1b_Zunknown\x1b\\").is_empty(),
+            "an unknown APC"
+        );
     }
 
     #[test]

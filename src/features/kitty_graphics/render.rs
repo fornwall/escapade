@@ -171,14 +171,7 @@ pub fn run(theme: &Theme, options: &Options<'_>) -> Result<()> {
         &source,
         source.payload_len(),
     );
-    let plan = build(
-        options,
-        background,
-        &source,
-        &geometry,
-        image_id,
-        &delivery,
-    )?;
+    let plan = build(options, background, &source, &geometry, image_id, &delivery)?;
 
     if options.dry_run {
         describe(
@@ -336,7 +329,10 @@ fn generate(
         Background::Colour(colour) => image.over(colour),
         Background::Keep => image,
     };
-    Ok((Source::Pixels(image), Origin::Generated(shapes::name(shape))))
+    Ok((
+        Source::Pixels(image),
+        Origin::Generated(shapes::name(shape)),
+    ))
 }
 
 /// Reads the input into memory, from a file or from standard input.
@@ -631,7 +627,8 @@ fn build(
         }
     };
     debug_assert!(
-        transmit.medium.is_indirect() == side_car.is_some() || matches!(delivery, Delivery::LocalFile(_)),
+        transmit.medium.is_indirect() == side_car.is_some()
+            || matches!(delivery, Delivery::LocalFile(_)),
         "only the file media use a side car"
     );
 
@@ -733,7 +730,10 @@ fn describe(
     let wire_bytes: usize = plan.sequences.iter().map(Sequence::len).sum();
 
     println!();
-    println!("  {}", theme.paint("dry run — nothing was sent", Ink::Title));
+    println!(
+        "  {}",
+        theme.paint("dry run — nothing was sent", Ink::Title)
+    );
     println!();
 
     let field = |label: &str, value: &str| {
@@ -858,7 +858,10 @@ fn describe(
         for row in 0..usize::from(geometry.area.1.min(3)) {
             println!(
                 "  {}",
-                theme.paint(&placeholder::describe_cell(plan.image_id, row, 0), Ink::Code)
+                theme.paint(
+                    &placeholder::describe_cell(plan.image_id, row, 0),
+                    Ink::Code
+                )
             );
         }
         if geometry.area.1 > 3 {
@@ -1080,8 +1083,13 @@ mod tests {
     fn a_generated_shape_with_no_area_uses_the_default_size() {
         let mut options = options();
         options.cols = None;
-        let (source, _) =
-            generate(Shape::Gradient, &options, Background::Keep, CellSize::default()).unwrap();
+        let (source, _) = generate(
+            Shape::Gradient,
+            &options,
+            Background::Keep,
+            CellSize::default(),
+        )
+        .unwrap();
         assert_eq!(source.width(), shapes::DEFAULT_SIZE);
         assert_eq!(source.height(), shapes::DEFAULT_SIZE, "square by default");
     }

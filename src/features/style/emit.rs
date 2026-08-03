@@ -112,7 +112,10 @@ fn explain(
         println!("  {}", theme.paint("the sequence", Ink::Accent));
         println!("    {}", theme.paint(&pretty(&rendition.open()), Ink::Code));
         println!("    {}", theme.paint(&pretty(&sanitized), Ink::Strong));
-        println!("    {}", theme.paint(&pretty(&rendition.close()), Ink::Code));
+        println!(
+            "    {}",
+            theme.paint(&pretty(&rendition.close()), Ink::Code)
+        );
         println!();
         println!(
             "  {} {}",
@@ -126,7 +129,11 @@ fn explain(
                 &format!(
                     "{} attribute{} in {} bytes of sequence around {} bytes of text",
                     rendition.attrs().len(),
-                    if rendition.attrs().len() == 1 { "" } else { "s" },
+                    if rendition.attrs().len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
                     rendition.open().len() + rendition.close().len(),
                     sanitized.len()
                 ),
@@ -278,9 +285,9 @@ fn describe_color(role: ColorRole, color: Color) -> String {
         Color::Basic(_) => "One of the sixteen colours every terminal has had since the 1980s, \
                             resolved against the user's own palette."
             .to_owned(),
-        Color::Palette(index) => format!(
-            "Palette entry {index} of 256, resolved against the user's own colour scheme."
-        ),
+        Color::Palette(index) => {
+            format!("Palette entry {index} of 256, resolved against the user's own colour scheme.")
+        }
         Color::Rgb(..) => format!(
             "24-bit direct colour, {}. This is the depth worth probing: a terminal that does not \
              implement it may quantise the colour to the nearest palette entry rather than \
@@ -332,9 +339,15 @@ fn describe_resets(rendition: &Rendition) -> String {
         );
     }
     if has(Attr::Overline) {
-        notes.push("`55` cancels the overline; `54` would not, being the reset for framed and encircled.".to_owned());
+        notes.push(
+            "`55` cancels the overline; `54` would not, being the reset for framed and encircled."
+                .to_owned(),
+        );
     }
-    if attrs.iter().any(|attr| attr.role() == Some(ColorRole::Underline)) {
+    if attrs
+        .iter()
+        .any(|attr| attr.role() == Some(ColorRole::Underline))
+    {
         notes.push(
             "`59` puts the underline colour back to \"follow the foreground\"; `39` would not \
              touch it."
@@ -342,7 +355,10 @@ fn describe_resets(rendition: &Rendition) -> String {
         );
     }
     if notes.is_empty() {
-        return format!("One reset per attribute, in the order they were set: `{}`.", rendition.reset_params());
+        return format!(
+            "One reset per attribute, in the order they were set: `{}`.",
+            rendition.reset_params()
+        );
     }
     notes.join(" ")
 }
@@ -395,10 +411,9 @@ fn collect_notes(
              than output without styling.",
             // The value is the user's own data and is quoted back at them, so it goes
             // through the sanitiser like any other untrusted text.
-            preference.explanation().map_or_else(
-                || format!("{NO_COLOR} is set"),
-                |text| sanitize_text(&text),
-            ),
+            preference
+                .explanation()
+                .map_or_else(|| format!("{NO_COLOR} is set"), |text| sanitize_text(&text),),
             match names.as_slice() {
                 [one] => format!("the {one} colour was"),
                 many => format!("the {} colours were", many.join(", ")),
@@ -424,7 +439,9 @@ fn collect_notes(
     }
 
     if attrs.contains(&Attr::Underline(UnderlineShape::None))
-        && attrs.iter().any(|attr| attr.role() == Some(ColorRole::Underline))
+        && attrs
+            .iter()
+            .any(|attr| attr.role() == Some(ColorRole::Underline))
     {
         notes.push(
             "An underline colour was given together with `--underline=none`, so there is no line \
@@ -574,10 +591,8 @@ mod tests {
             "{found:?}"
         );
         // A palette colour needs no such warning.
-        let palette = Rendition::new().with(Attr::Color(
-            ColorRole::Foreground,
-            Color::Palette(202),
-        ));
+        let palette =
+            Rendition::new().with(Attr::Color(ColorRole::Foreground, Color::Palette(202)));
         assert!(
             !notes(&palette, "word")
                 .iter()
@@ -640,7 +655,10 @@ mod tests {
         let first = found.first().expect("a note");
         assert!(first.contains("NO_COLOR"), "{first}");
         assert!(first.contains("your environment"), "{first}");
-        assert!(first.contains("not a limitation of your terminal"), "{first}");
+        assert!(
+            first.contains("not a limitation of your terminal"),
+            "{first}"
+        );
         assert!(first.contains("foreground"), "{first}");
         assert!(
             first.contains("without colour rather than output without styling"),

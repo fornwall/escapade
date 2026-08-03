@@ -655,10 +655,10 @@ impl ProbeOutcome {
         // The preference sits on top of the capability rather than replacing it, so the
         // report can say both things at once.
         if subject.is_color() && self.preference.suppresses_color() {
-            let explanation = self.preference.explanation().map_or_else(
-                || format!("{NO_COLOR} is set"),
-                |text| sanitize_text(&text),
-            );
+            let explanation = self
+                .preference
+                .explanation()
+                .map_or_else(|| format!("{NO_COLOR} is set"), |text| sanitize_text(&text));
             return Finding {
                 subject,
                 support: Support::No,
@@ -907,7 +907,12 @@ pub fn probe(
         input.drain();
 
         term.write_now(&version_query())?;
-        term.write_now(&measurement_sequence(plan))?;
+        // Shielded, because DECRQSS is a control string: a terminal with no state
+        // for `ESC P` prints `$qm` rather than discarding it, and this probe sends
+        // one per attribute in the plan. `CSI > q` above needs no shield — the
+        // control-sequence grammar is universal, so an unknown final byte is still
+        // consumed.
+        term.write_query(&measurement_sequence(plan))?;
         // The barrier goes last and is deliberately not wrapped for a multiplexer: the
         // question is whether the round trip completed. A multiplexer answers device
         // attributes from its own emulator rather than forwarding them, which is also why
@@ -997,7 +1002,13 @@ fn drain_remaining(input: &mut InputReader, outcome: &mut ProbeOutcome) {
         {
             outcome.xtversion = Some(name);
         }
-        if matches!(reply, Reply::Csi { final_byte: 'c', .. }) {
+        if matches!(
+            reply,
+            Reply::Csi {
+                final_byte: 'c',
+                ..
+            }
+        ) {
             outcome.answered_barrier = true;
         }
         outcome.replies.push(reply);
@@ -1079,49 +1090,56 @@ pub fn report(
 /// two functions, and `escapade` earns its "no dependency you cannot read" property by
 /// not adding one for this.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "linear field-by-field emission; the length is the object's size, not branching"
+)]
 pub fn json_line(outcome: &ProbeOutcome) -> String {
     let mut out = String::with_capacity(2048);
     out.push('{');
     let _ = write!(out, "\"feature\":{},", json_string(FEATURE_ID));
-    let _ = write!(out, 
+    let _ = write!(
+        out,
         "\"verdict\":{},",
         json_string(outcome.support().as_str())
     );
     let _ = write!(out, "\"measurable\":{},", outcome.measurable());
     let _ = write!(out, "\"interactive\":{},", outcome.interactive);
-    let _ = write!(out, 
-        "\"answered_barrier\":{},",
-        outcome.answered_barrier
-    );
-    let _ = write!(out, 
+    let _ = write!(out, "\"answered_barrier\":{},", outcome.answered_barrier);
+    let _ = write!(
+        out,
         "\"no_color\":{},",
         match outcome.preference.value() {
             Some(value) => format!("{{\"set\":true,\"value\":{}}}", json_string(value)),
             None => "{\"set\":false,\"value\":null}".to_owned(),
         }
     );
-    let _ = write!(out, 
+    let _ = write!(
+        out,
         "\"multiplexer\":{},",
         match outcome.multiplexer {
             Some(multiplexer) => json_string(multiplexer.name()),
             None => "null".to_owned(),
         }
     );
-    let _ = write!(out, 
+    let _ = write!(
+        out,
         "\"xtversion\":{},",
         match &outcome.xtversion {
             Some(version) => json_string(version),
             None => "null".to_owned(),
         }
     );
-    let _ = write!(out, 
+    let _ = write!(
+        out,
         "\"terminal\":{},",
         match outcome.identified {
             Some(id) => json_string(id),
             None => "null".to_owned(),
         }
     );
-    let _ = write!(out, 
+    let _ = write!(
+        out,
         "\"matrix_status\":{},",
         match outcome.status {
             Some(status) => json_string(status.label()),
@@ -1137,7 +1155,8 @@ pub fn json_line(outcome: &ProbeOutcome) -> String {
         let reported = outcome
             .measurement(finding.subject)
             .and_then(Measurement::reported);
-        let _ = write!(out, 
+        let _ = write!(
+            out,
             "{{\"attribute\":{},\"sgr\":{},\"reset\":{},\"verdict\":{},\"reason_code\":{},\
              \"reason\":{},\"reported\":{},\"capability\":{},\"capability_reason\":{}}}",
             json_string(&finding.subject.label()),
@@ -1167,7 +1186,8 @@ pub fn json_line(outcome: &ProbeOutcome) -> String {
         if index > 0 {
             out.push(',');
         }
-        let _ = write!(out, 
+        let _ = write!(
+            out,
             "{{\"source\":{},\"value\":{},\"implies\":{},\"in_band\":{}}}",
             json_string(item.source),
             json_string(&item.value),
@@ -1224,7 +1244,10 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
     let support = outcome.support();
 
     println!();
-    println!("  {}", theme.paint("Text attribute support (SGR)", Ink::Title));
+    println!(
+        "  {}",
+        theme.paint("Text attribute support (SGR)", Ink::Title)
+    );
     println!();
 
     for line in wrap(
@@ -1250,7 +1273,11 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
             .map(|text| sanitize_text(&text))
             .unwrap_or_default();
         for line in wrap(&explanation, theme.width().saturating_sub(6)) {
-            println!("  {} {}", theme.paint("!", Ink::Warn), theme.paint(&line, Ink::Warn));
+            println!(
+                "  {} {}",
+                theme.paint("!", Ink::Warn),
+                theme.paint(&line, Ink::Warn)
+            );
         }
         for line in wrap(
             "Every colour below is therefore reported as `no`, with the terminal's own capability \
@@ -1271,7 +1298,11 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
             &format!(
                 "for the {} attribute{} asked about (exit status {})",
                 outcome.measurements.len(),
-                if outcome.measurements.len() == 1 { "" } else { "s" },
+                if outcome.measurements.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
                 exit_status_number(support)
             ),
             Ink::Muted
@@ -1307,7 +1338,10 @@ fn print_debug(theme: &Theme, outcome: &ProbeOutcome) {
                 &format!("{:<label_width$}", finding.subject.label()),
                 Ink::Strong
             ),
-            theme.paint(&format!("{:<sgr_width$}", finding.subject.params()), Ink::Code),
+            theme.paint(
+                &format!("{:<sgr_width$}", finding.subject.params()),
+                Ink::Code
+            ),
             theme.paint(&format!("{:<7}", finding.support.as_str()), ink),
             theme.paint(&format!("[{}]", finding.basis.as_str()), Ink::Muted)
         );
@@ -1797,11 +1831,15 @@ mod tests {
             (Attr::Overline, None),
         ]);
         assert_eq!(
-            outcome.finding(Attr::Underline(UnderlineShape::Curly)).support,
+            outcome
+                .finding(Attr::Underline(UnderlineShape::Curly))
+                .support,
             Support::Yes
         );
         assert_eq!(
-            outcome.finding(Attr::Underline(UnderlineShape::Dotted)).support,
+            outcome
+                .finding(Attr::Underline(UnderlineShape::Dotted))
+                .support,
             Support::No
         );
         assert_eq!(outcome.finding(Attr::Overline).support, Support::Unknown);
@@ -1868,7 +1906,9 @@ mod tests {
         }
         // …and a plain underline is still a yes, because it always is.
         assert_eq!(
-            outcome.finding(Attr::Underline(UnderlineShape::Single)).support,
+            outcome
+                .finding(Attr::Underline(UnderlineShape::Single))
+                .support,
             Support::Yes
         );
     }
@@ -1992,7 +2032,10 @@ mod tests {
         // …and the capability is reported alongside, measured and positive.
         assert_eq!(finding.capability, Some(Support::Yes));
         let capability_reason = finding.capability_reason.unwrap();
-        assert!(capability_reason.contains("38;2;1;2;3"), "{capability_reason}");
+        assert!(
+            capability_reason.contains("38;2;1;2;3"),
+            "{capability_reason}"
+        );
     }
 
     #[test]
@@ -2170,7 +2213,10 @@ mod tests {
             ..ProbeOutcome::default()
         };
         let line = json_line(&outcome);
-        assert!(line.contains("\"no_color\":{\"set\":true,\"value\":\"1\"}"), "{line}");
+        assert!(
+            line.contains("\"no_color\":{\"set\":true,\"value\":\"1\"}"),
+            "{line}"
+        );
         assert!(line.contains("\"verdict\":\"no\""), "{line}");
         assert!(line.contains("\"reason_code\":\"preference\""), "{line}");
         assert!(line.contains("\"capability\":\"yes\""), "{line}");

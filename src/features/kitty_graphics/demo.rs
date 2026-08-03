@@ -24,12 +24,12 @@ use crate::{
             layout::CellSize,
             pixels::{Colour, Rgba},
             placeholder,
+            probe::Accepts,
             proto::{
                 self, Action, Animation, AnimationState, Blend, Composition, CursorMovement,
                 DeleteTarget, Deletion, Format, FrameData, Placement, Quiet, Rect, Sequence,
                 Transmit,
             },
-            probe::Accepts,
             render, shapes,
         },
         wrap,
@@ -112,21 +112,12 @@ macro_rules! step {
 /// The shape steps are named after the shapes, so `--only mandelbrot` works and
 /// `escapade graphics render --shape mandelbrot` shows the same image.
 const STEPS: &[Step] = &[
-    step!(
-        "transmit",
-        "Transmit and place an image",
-        |stage| stage.transmit_and_place()
-    ),
-    step!(
-        "formats",
-        "Three formats: RGB, RGBA and PNG",
-        |stage| stage.formats()
-    ),
-    step!(
-        "chunking",
-        "Chunking: 4096 bytes at a time",
-        |stage| stage.chunking()
-    ),
+    step!("transmit", "Transmit and place an image", |stage| stage
+        .transmit_and_place()),
+    step!("formats", "Three formats: RGB, RGBA and PNG", |stage| stage
+        .formats()),
+    step!("chunking", "Chunking: 4096 bytes at a time", |stage| stage
+        .chunking()),
     step!(
         "gradient",
         "Gradient: a smooth ramp, and who quantises it",
@@ -157,11 +148,8 @@ const STEPS: &[Step] = &[
         "Test card: how big is a cell, and what fitting does",
         |stage| stage.test_card()
     ),
-    step!(
-        "deletion",
-        "Deleting images and placements",
-        |stage| stage.deletion()
-    ),
+    step!("deletion", "Deleting images and placements", |stage| stage
+        .deletion()),
     step!(
         "animation",
         "Animation: frames, gaps and composition",
@@ -177,11 +165,8 @@ const STEPS: &[Step] = &[
         "Putting it together (arrow keys, mouse, q to finish)",
         |stage| stage.finale()
     ),
-    step!(
-        "farewell",
-        "Leaving the alternate screen",
-        |stage| stage.farewell()
-    ),
+    step!("farewell", "Leaving the alternate screen", |stage| stage
+        .farewell()),
 ];
 
 /// The step names, in order, for [`crate::features::select_steps`].
@@ -491,9 +476,18 @@ impl Stage<'_> {
         self.keys(&[
             ("a=T", "transmit data and display it here"),
             ("f=32", "the payload is 32-bit RGBA, four bytes per pixel"),
-            ("s=64,v=64", "width and height in pixels — required for raw pixels"),
-            ("i=…", "an image id, so later commands can refer to this image"),
-            ("c=8", "display it over 8 columns; the terminal derives the row count"),
+            (
+                "s=64,v=64",
+                "width and height in pixels — required for raw pixels",
+            ),
+            (
+                "i=…",
+                "an image id, so later commands can refer to this image",
+            ),
+            (
+                "c=8",
+                "display it over 8 columns; the terminal derives the row count",
+            ),
             ("m=1", "more chunks follow — see step 3"),
         ])?;
         self.gap();
@@ -781,7 +775,10 @@ impl Stage<'_> {
 
         self.show(&transparent[0])?;
         self.keys(&[
-            ("f=32", "keep the alpha channel and let the terminal composite"),
+            (
+                "f=32",
+                "keep the alpha channel and let the terminal composite",
+            ),
             ("z=-1", "draw underneath the text in these cells"),
             (
                 "f=24",
@@ -997,8 +994,14 @@ impl Stage<'_> {
 
         self.show(&cropped[0])?;
         self.keys(&[
-            ("c=10", "one axis only: the terminal derives the other exactly"),
-            ("c=16,r=4", "both axes: the aspect ratio is whatever you asked for"),
+            (
+                "c=10",
+                "one axis only: the terminal derives the other exactly",
+            ),
+            (
+                "c=16,r=4",
+                "both axes: the aspect ratio is whatever you asked for",
+            ),
             ("x=60,y=60", "a source rectangle, in image pixels…"),
             ("w=120,h=120", "…which crops rather than scales"),
         ])?;
@@ -1099,7 +1102,10 @@ impl Stage<'_> {
         self.show(&frames)?;
         self.show(&by_number)?;
         self.keys(&[
-            ("d=i", "delete by image id, keeping the pixels in the terminal"),
+            (
+                "d=i",
+                "delete by image id, keeping the pixels in the terminal",
+            ),
             ("d=I", "the same, but free the image data as well"),
             ("d=q", "everything at one cell *and* one z-index"),
             ("d=F", "an image's animation frames, and their data"),
@@ -1229,13 +1235,22 @@ impl Stage<'_> {
         self.show(&streaming)?;
         self.keys(&[
             ("a=f", Action::Frame.describe()),
-            ("x=8,y=8", "where in the image this rectangle of pixels lands"),
+            (
+                "x=8,y=8",
+                "where in the image this rectangle of pixels lands",
+            ),
             ("c=1", "compose it onto frame 1, the root frame"),
-            ("Y=…", "or onto a flat 32-bit RGBA colour, with no base frame"),
+            (
+                "Y=…",
+                "or onto a flat 32-bit RGBA colour, with no base frame",
+            ),
             ("z=160", "wait 160ms before the next frame"),
             ("X=1", "overwrite pixels instead of alpha-blending them"),
             ("a=a,s=3", "run the animation, looping at the end"),
-            ("a=a,s=2", "or run it and wait at the end for more frames to arrive"),
+            (
+                "a=a,s=2",
+                "or run it and wait at the end for more frames to arrive",
+            ),
             ("v=1", "loop forever (v=n plays n-1 loops)"),
         ])?;
         self.gap();
@@ -1297,7 +1312,10 @@ impl Stage<'_> {
         self.show(&virtual_placement)?;
         self.keys(&[
             ("a=t", "transmit only — do not display anything yet"),
-            ("a=p,U=1", "create a *virtual* placement: an invisible prototype"),
+            (
+                "a=p,U=1",
+                "create a *virtual* placement: an invisible prototype",
+            ),
             (
                 "c=8,r=4",
                 "the size it will be fitted to, which the placeholder cells then fill",
@@ -1312,7 +1330,12 @@ impl Stage<'_> {
         )?;
         for row in 0..2usize {
             let described = placeholder::describe_cell(ID_PLACEHOLDER, row, 0);
-            self.put(&self.theme.paint(&format!("    {described}"), Ink::Code).clone())?;
+            self.put(
+                &self
+                    .theme
+                    .paint(&format!("    {described}"), Ink::Code)
+                    .clone(),
+            )?;
         }
         self.gap();
 
@@ -1466,8 +1489,11 @@ impl Stage<'_> {
             self.term.move_to(col, row)?;
             self.emit(&[proto::place(&placement)])?;
             let status = format!("  cursor {col},{row}   moves {moves}   arrows · click · q  ");
-            self.term
-                .put(3, self.term.rows, &self.theme.paint(&status, Ink::Muted).clone())?;
+            self.term.put(
+                3,
+                self.term.rows,
+                &self.theme.paint(&status, Ink::Muted).clone(),
+            )?;
             self.term.end_sync()?;
 
             let event = self.input.read(Duration::from_millis(FRAME_MS))?;
@@ -1537,7 +1563,10 @@ impl Stage<'_> {
         self.show(&cleanup)?;
         self.keys(&[
             ("a=d", "delete"),
-            ("d=A", "every placement on screen, freeing the image data too"),
+            (
+                "d=A",
+                "every placement on screen, freeing the image data too",
+            ),
         ])?;
         self.gap();
         self.prose("Press space to leave the alternate screen and return to your shell.")?;
@@ -1622,10 +1651,7 @@ mod tests {
             Shape::TestCard,
         ] {
             let name = shapes::name(shape);
-            assert!(
-                step_names().contains(&name),
-                "no demo step called `{name}`"
-            );
+            assert!(step_names().contains(&name), "no demo step called `{name}`");
         }
     }
 
@@ -1639,14 +1665,13 @@ mod tests {
         assert!(select(Some("transmit"), None).unwrap().single);
         assert_eq!(
             select(Some("mandel"), None).unwrap().start,
-            step_names().iter().position(|n| *n == "mandelbrot").unwrap(),
+            step_names()
+                .iter()
+                .position(|n| *n == "mandelbrot")
+                .unwrap(),
             "an unambiguous prefix is enough"
         );
-        assert_eq!(
-            select(None, Some(3)).unwrap().start,
-            2,
-            "--step is 1-based"
-        );
+        assert_eq!(select(None, Some(3)).unwrap().start, 2, "--step is 1-based");
         assert!(!select(None, Some(3)).unwrap().single);
         assert!(select(Some("nonsense"), None).is_err());
     }

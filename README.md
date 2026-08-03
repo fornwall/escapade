@@ -16,8 +16,9 @@ them the same treatment:
 | `probe` | ask *your* terminal whether it implements it, and show what it answered |
 | `demo` | watch it work, one step at a time, with the actual bytes on screen |
 
-Some features earn a fourth verb, because they are useful outside a demo:
-`graphics render`, `glyph supports`, `grapheme render`.
+Some features go further than those three, because they are useful outside a
+demo: `graphics render` and `grapheme render` are fourth verbs, and `glyph probe`
+takes codepoints and answers which of them the terminal can actually draw.
 
 ```console
 $ escapade list
@@ -39,6 +40,29 @@ $ escapade hyperlink --url https://example.com "click me"
 * **`hyperlink`** — OSC 8, which makes a run of text clickable.
 * **`notification`** — raise a real desktop notification from inside the
   terminal.
+* **`progress`** — the progress indicator in the taskbar or tab title, set from a
+  shell script; `--watch` reads percentages from standard input as they arrive.
+* **`textsize`** — text drawn several cells tall and wide that still selects and
+  copies as one ordinary line.
+* **`color`** — ask the terminal what its foreground, background, cursor and
+  palette colors actually are, and `--watch` for the user changing theme
+  underneath you.
+* **`clipboard`** — OSC 52, which reaches the clipboard of the machine you are
+  sitting at rather than the one you ssh'd into.
+* **`style`** — bold, italic, six kinds of underline with a color of their own,
+  strikethrough, overline, and 24-bit color, composed into one sequence.
+* **`dimensions`** — the size in cells and in pixels, with thresholds like
+  `--rows-at-least 20` answered through the exit status.
+* **`unscroll`** — pull scrollback back down onto the screen, undoing a scroll.
+* **`keys`** — what your keyboard actually sends, and what the kitty keyboard
+  protocol adds on top; `keys watch` prints every key event as it arrives with
+  the bytes that produced it.
+* **`decode`** — turn a stream of terminal bytes back into named, explained
+  escape sequences. Pipe a program's output through it to see what it really
+  emitted, optionally annotated with codepoint names and byte offsets.
+* **`doctor`** — diagnose this terminal by diffing what terminfo claims, what the
+  terminal says about itself over XTGETTCAP, what it actually does when probed,
+  and what the environment advertises, then report where those disagree.
 
 ## Design
 
@@ -110,4 +134,4 @@ bottom of every `explain` output.
 
 ## License
 
-MIT or Apache-2.0, at your option.
+Apache-2.0. The full text is in [LICENSE](LICENSE).

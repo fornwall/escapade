@@ -151,7 +151,13 @@ pub fn query_cell_size(term: &mut Term, input: &mut InputReader) -> Result<CellS
     // Two replies at most, and the first is the one we prefer.
     for _ in 0..2 {
         let Ok(Some(Reply::Csi { params, .. })) = input.wait_for_reply(REPLY_TIMEOUT, |reply| {
-            matches!(reply, Reply::Csi { final_byte: 't', .. })
+            matches!(
+                reply,
+                Reply::Csi {
+                    final_byte: 't',
+                    ..
+                }
+            )
         }) else {
             break;
         };
@@ -578,7 +584,10 @@ mod tests {
             assert!(!source.describe().is_empty());
             assert!(!source.as_str().is_empty());
             assert!(
-                source.as_str().chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                source
+                    .as_str()
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '-'),
                 "{} should be machine-readable",
                 source.as_str()
             );
@@ -653,10 +662,22 @@ mod tests {
     #[test]
     fn contain_never_exceeds_the_requested_box() {
         for (width, height) in [(400, 100), (100, 400), (33, 71), (1, 1000)] {
-            let geometry =
-                plan((width, height), CELL, &request(Some(12), Some(6), Fit::Contain)).unwrap();
-            assert!(geometry.area.0 <= 12, "{width}x{height} -> {:?}", geometry.area);
-            assert!(geometry.area.1 <= 6, "{width}x{height} -> {:?}", geometry.area);
+            let geometry = plan(
+                (width, height),
+                CELL,
+                &request(Some(12), Some(6), Fit::Contain),
+            )
+            .unwrap();
+            assert!(
+                geometry.area.0 <= 12,
+                "{width}x{height} -> {:?}",
+                geometry.area
+            );
+            assert!(
+                geometry.area.1 <= 6,
+                "{width}x{height} -> {:?}",
+                geometry.area
+            );
         }
     }
 
@@ -679,8 +700,12 @@ mod tests {
     #[test]
     fn a_crop_never_leaves_the_image() {
         for (width, height) in [(400, 100), (100, 400), (7, 3), (1000, 1)] {
-            let geometry =
-                plan((width, height), CELL, &request(Some(9), Some(4), Fit::Cover)).unwrap();
+            let geometry = plan(
+                (width, height),
+                CELL,
+                &request(Some(9), Some(4), Fit::Cover),
+            )
+            .unwrap();
             if let Some(crop) = geometry.crop {
                 assert!(crop.x + crop.width <= width, "{width}x{height}: {crop:?}");
                 assert!(crop.y + crop.height <= height, "{width}x{height}: {crop:?}");
@@ -786,7 +811,12 @@ mod tests {
     fn a_hugely_oversized_source_is_resampled_down() {
         // A 4000x3000 photo in 20 columns: the placement is 200x... pixels, so
         // sending 12 million pixels would be absurd.
-        let geometry = plan((4000, 3000), CELL, &request(Some(20), Some(10), Fit::Contain)).unwrap();
+        let geometry = plan(
+            (4000, 3000),
+            CELL,
+            &request(Some(20), Some(10), Fit::Contain),
+        )
+        .unwrap();
         let (width, height) = geometry.resample.unwrap();
         assert_eq!(
             (width, height),
@@ -845,6 +875,9 @@ mod tests {
     fn the_fallback_cell_is_a_plausible_bitmap_cell() {
         assert_eq!(FALLBACK_CELL, (8, 16));
         let cell = CellSize::default();
-        assert!(cell.height > cell.width, "cells are taller than they are wide");
+        assert!(
+            cell.height > cell.width,
+            "cells are taller than they are wide"
+        );
     }
 }

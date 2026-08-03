@@ -149,11 +149,11 @@ pub fn item(decoded: &Decoded, description: &Description, options: Options) -> V
     fields.extend(specifics(&decoded.item, options));
 
     if options.hex {
-        fields.push(("hex", string(&super::display::hex(&decoded.bytes, HEX_LIMIT))));
         fields.push((
-            "hex_complete",
-            boolean(decoded.bytes.len() <= HEX_LIMIT),
+            "hex",
+            string(&super::display::hex(&decoded.bytes, HEX_LIMIT)),
         ));
+        fields.push(("hex_complete", boolean(decoded.bytes.len() <= HEX_LIMIT)));
     }
 
     object(&fields)
@@ -242,12 +242,7 @@ fn specifics(item: &Item, options: Options) -> Vec<(&'static str, Value)> {
             if matches!(kind, StringKind::Osc) {
                 out.push((
                     "fields",
-                    array(
-                        &text
-                            .split(';')
-                            .map(string)
-                            .collect::<Vec<Value>>(),
-                    ),
+                    array(&text.split(';').map(string).collect::<Vec<Value>>()),
                 ));
             }
             out
@@ -262,7 +257,12 @@ fn specifics(item: &Item, options: Options) -> Vec<(&'static str, Value)> {
         } => vec![
             (
                 "intermediates",
-                string(&intermediates.iter().map(|&b| char::from(b)).collect::<String>()),
+                string(
+                    &intermediates
+                        .iter()
+                        .map(|&b| char::from(b))
+                        .collect::<String>(),
+                ),
             ),
             ("final", string(&char::from(*final_byte).to_string())),
         ],
@@ -304,10 +304,7 @@ fn control_fields(fields: &Fields) -> Vec<(&'static str, Value)> {
                     .collect::<Vec<Value>>(),
             ),
         ),
-        (
-            "intermediates",
-            string(&fields.intermediates_text()),
-        ),
+        ("intermediates", string(&fields.intermediates_text())),
         ("final", string(&fields.final_char().to_string())),
     ]
 }

@@ -287,7 +287,11 @@ mod tests {
     #[test]
     fn svg_is_recognised_from_its_opening_element() {
         assert_eq!(from_text(b"<svg xmlns=\"x\"/>"), Some(InputKind::Svg));
-        assert_eq!(from_text(b"  \n\t<svg/>"), Some(InputKind::Svg), "leading space");
+        assert_eq!(
+            from_text(b"  \n\t<svg/>"),
+            Some(InputKind::Svg),
+            "leading space"
+        );
         assert_eq!(
             from_text("\u{feff}<svg/>".as_bytes()),
             Some(InputKind::Svg),

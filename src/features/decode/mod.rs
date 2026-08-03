@@ -45,6 +45,14 @@
 //! capability, like `doctor`. It sends nothing, asks the terminal nothing, and
 //! works with output redirected — so there is no probe to write, and nothing for a
 //! support matrix to be about.
+//!
+//! # Prior art
+//!
+//! GNU `teseq` is the only comparable tool, and it is dormant: it predates every
+//! protocol this project covers, so it names the VT100-era sequences and passes
+//! the rest through as unlabelled bytes. That gap is the reason [`catalog`]
+//! attributes a sequence to a feature in the database rather than to a table
+//! written here — the naming grows as the database does.
 
 mod annotate;
 mod catalog;
@@ -114,7 +122,14 @@ pub fn run(catalog: &Catalog, command: &DecodeCommand, no_color: bool) -> Result
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
 
-    match decode(&mut input, &mut out, &theme, options, command.format, &index) {
+    match decode(
+        &mut input,
+        &mut out,
+        &theme,
+        options,
+        command.format,
+        &index,
+    ) {
         Ok(()) => Ok(ExitCode::SUCCESS),
         // Whatever was consuming the output has gone away, which is what `head`
         // does. Reporting it as an error would be noise.
@@ -263,7 +278,12 @@ mod tests {
             .unwrap()
             .name
             .clone();
-        let output = decoded(b"\x1b[1;31mred\x1b[0m", options(), OutputFormat::Text, CHUNK);
+        let output = decoded(
+            b"\x1b[1;31mred\x1b[0m",
+            options(),
+            OutputFormat::Text,
+            CHUNK,
+        );
         assert_eq!(
             output,
             format!(

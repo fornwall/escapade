@@ -439,7 +439,12 @@ fn parse_text(buf: &[u8], end_of_input: bool) -> Outcome {
         // A scalar value cut in half. Only the end of the input makes it a fault.
         Some(None) => {
             if end_of_input {
-                item(Item::Malformed { flaw: Flaw::InvalidUtf8 }, scan_end)
+                item(
+                    Item::Malformed {
+                        flaw: Flaw::InvalidUtf8,
+                    },
+                    scan_end,
+                )
             } else {
                 Outcome::Incomplete
             }
@@ -461,7 +466,12 @@ fn parse_text(buf: &[u8], end_of_input: bool) -> Outcome {
 fn parse_escape(buf: &[u8], end_of_input: bool) -> Outcome {
     let Some(&second) = buf.get(1) else {
         return if end_of_input {
-            item(Item::Unterminated { pending: Pending::Esc }, 1)
+            item(
+                Item::Unterminated {
+                    pending: Pending::Esc,
+                },
+                1,
+            )
         } else {
             Outcome::Incomplete
         };
@@ -475,7 +485,12 @@ fn parse_escape(buf: &[u8], end_of_input: bool) -> Outcome {
             match StringKind::from_opener(second) {
                 Some(kind) => parse_string(buf, kind, end_of_input),
                 // Guarded by the arm's condition.
-                None => item(Item::Malformed { flaw: Flaw::StrayEsc }, 1),
+                None => item(
+                    Item::Malformed {
+                        flaw: Flaw::StrayEsc,
+                    },
+                    1,
+                ),
             }
         }
         // `ESC <intermediates> <final>`: charset designation, DECALN, S7C1T.
@@ -490,7 +505,12 @@ fn parse_escape(buf: &[u8], end_of_input: bool) -> Outcome {
         // `ESC ESC`, `ESC` followed by a control byte, and anything in the
         // eight-bit range: the first escape led nowhere. Reported on its own, so
         // the byte after it is parsed afresh.
-        _ => item(Item::Malformed { flaw: Flaw::StrayEsc }, 1),
+        _ => item(
+            Item::Malformed {
+                flaw: Flaw::StrayEsc,
+            },
+            1,
+        ),
     }
 }
 
@@ -500,7 +520,12 @@ fn parse_single_shift(buf: &[u8], level: u8, end_of_input: bool) -> Outcome {
     match buf.get(2) {
         Some(&byte) if byte >= 0x20 && byte != 0x7f => item(Item::SingleShift { level, byte }, 3),
         // A control byte cannot be shifted into a character set.
-        Some(_) => item(Item::Malformed { flaw: Flaw::StrayEsc }, 2),
+        Some(_) => item(
+            Item::Malformed {
+                flaw: Flaw::StrayEsc,
+            },
+            2,
+        ),
         None => {
             if end_of_input {
                 item(
@@ -535,11 +560,23 @@ fn parse_esc_sequence(buf: &[u8], end_of_input: bool) -> Outcome {
                     index + 1,
                 );
             }
-            _ => return item(Item::Malformed { flaw: Flaw::StrayEsc }, index),
+            _ => {
+                return item(
+                    Item::Malformed {
+                        flaw: Flaw::StrayEsc,
+                    },
+                    index,
+                );
+            }
         }
     }
     if end_of_input {
-        item(Item::Unterminated { pending: Pending::Esc }, index)
+        item(
+            Item::Unterminated {
+                pending: Pending::Esc,
+            },
+            index,
+        )
     } else {
         Outcome::Incomplete
     }
@@ -639,7 +676,13 @@ fn parse_params(raw: &str) -> Vec<Param> {
         .map(|field| Param {
             parts: field
                 .split(':')
-                .map(|part| if part.is_empty() { None } else { part.parse().ok() })
+                .map(|part| {
+                    if part.is_empty() {
+                        None
+                    } else {
+                        part.parse().ok()
+                    }
+                })
                 .collect(),
         })
         .collect()
@@ -651,7 +694,12 @@ fn parse_csi(buf: &[u8], end_of_input: bool) -> Outcome {
         FieldScan::Complete { fields, len } => item(Item::Csi(fields), len),
         FieldScan::Incomplete => {
             if end_of_input {
-                item(Item::Unterminated { pending: Pending::Csi }, buf.len())
+                item(
+                    Item::Unterminated {
+                        pending: Pending::Csi,
+                    },
+                    buf.len(),
+                )
             } else {
                 Outcome::Incomplete
             }
@@ -983,7 +1031,11 @@ mod tests {
         let fields = csi(b"\x1b[H");
         assert_eq!(fields.private, None);
         assert!(fields.params.is_empty());
-        assert_eq!(fields.value_or(0, 1), 1, "an absent parameter is its default");
+        assert_eq!(
+            fields.value_or(0, 1),
+            1,
+            "an absent parameter is its default"
+        );
     }
 
     #[test]
@@ -1109,7 +1161,9 @@ mod tests {
         // Sixel: `DCS 0;1;0 q <data> ST`.
         let decoded = items(b"\x1bP0;1;0q#0;2;0;0;0\x1b\\");
         match &decoded[0] {
-            Item::Dcs { fields, payload, .. } => {
+            Item::Dcs {
+                fields, payload, ..
+            } => {
                 assert_eq!(fields.final_byte, b'q');
                 assert_eq!(fields.value(1), Some(1));
                 assert_eq!(payload, b"#0;2;0;0;0");
@@ -1143,8 +1197,14 @@ mod tests {
         assert_eq!(
             items(b"\x1bNx\x1bOy"),
             vec![
-                Item::SingleShift { level: 2, byte: b'x' },
-                Item::SingleShift { level: 3, byte: b'y' },
+                Item::SingleShift {
+                    level: 2,
+                    byte: b'x'
+                },
+                Item::SingleShift {
+                    level: 3,
+                    byte: b'y'
+                },
             ]
         );
     }
@@ -1212,7 +1272,9 @@ mod tests {
     fn an_unterminated_csi_dcs_apc_and_esc_are_all_reported() {
         assert_eq!(
             items(b"\x1b[1;3"),
-            vec![Item::Unterminated { pending: Pending::Csi }]
+            vec![Item::Unterminated {
+                pending: Pending::Csi
+            }]
         );
         assert_eq!(
             items(b"\x1bP$q"),
@@ -1228,11 +1290,15 @@ mod tests {
         );
         assert_eq!(
             items(b"\x1b"),
-            vec![Item::Unterminated { pending: Pending::Esc }]
+            vec![Item::Unterminated {
+                pending: Pending::Esc
+            }]
         );
         assert_eq!(
             items(b"\x1b("),
-            vec![Item::Unterminated { pending: Pending::Esc }]
+            vec![Item::Unterminated {
+                pending: Pending::Esc
+            }]
         );
         assert_eq!(
             items(b"\x1bN"),
@@ -1258,7 +1324,9 @@ mod tests {
         assert_eq!(
             items(b"\x1b[1;\x07m"),
             vec![
-                Item::Malformed { flaw: Flaw::CsiAbandoned },
+                Item::Malformed {
+                    flaw: Flaw::CsiAbandoned
+                },
                 Item::Control(0x07),
                 text("m"),
             ]
@@ -1314,7 +1382,9 @@ mod tests {
         assert_eq!(
             items(b"\x1b\x1b[0m"),
             vec![
-                Item::Malformed { flaw: Flaw::StrayEsc },
+                Item::Malformed {
+                    flaw: Flaw::StrayEsc
+                },
                 Item::Csi(csi(b"\x1b[0m")),
             ]
         );
@@ -1326,7 +1396,9 @@ mod tests {
             items(b"a\xffb"),
             vec![
                 text("a"),
-                Item::Malformed { flaw: Flaw::InvalidUtf8 },
+                Item::Malformed {
+                    flaw: Flaw::InvalidUtf8
+                },
                 text("b"),
             ]
         );
@@ -1337,7 +1409,9 @@ mod tests {
         // The first two bytes of a four-byte emoji, and no more input coming.
         assert_eq!(
             items(b"\xf0\x9f"),
-            vec![Item::Malformed { flaw: Flaw::InvalidUtf8 }]
+            vec![Item::Malformed {
+                flaw: Flaw::InvalidUtf8
+            }]
         );
         // Mid-stream it is merely incomplete.
         assert_eq!(parse_item(b"\xf0\x9f", false), Outcome::Incomplete);

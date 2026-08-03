@@ -24,7 +24,7 @@ use crate::{
     features::{
         progress::{
             probe::{self, ProbeOutcome},
-            sequence::{NUMBER, Percent, Report, State, SUBCOMMAND},
+            sequence::{NUMBER, Percent, Report, SUBCOMMAND, State},
         },
         wrap,
     },
@@ -103,8 +103,16 @@ const STEPS: &[Step] = &[
     step!("climb", "A percentage, climbing, for real", step_climb),
     step!("pulse", "Indeterminate: busy, total unknown", step_pulse),
     step!("error", "Error: the same bar, turned red", step_error),
-    step!("warning", "Warning: paused, or wanting attention", step_warning),
-    step!("clear", "Taking it away again, which is not optional", step_clear),
+    step!(
+        "warning",
+        "Warning: paused, or wanting attention",
+        step_warning
+    ),
+    step!(
+        "clear",
+        "Taking it away again, which is not optional",
+        step_clear
+    ),
     step!("collision", "The OSC 9 collision", step_collision),
     step!("restore", "Putting the terminal back", step_leave),
 ];
@@ -392,7 +400,10 @@ impl Ctx<'_> {
         self.term.write_now(&report.sequence())?;
         let sent = format!("→ sent {} bytes", report.sequence().len());
         self.indented(2, &self.theme.paint(&sent, Ink::Good))?;
-        let expectation = format!("look at the taskbar or tab, not here: {}", report.expectation());
+        let expectation = format!(
+            "look at the taskbar or tab, not here: {}",
+            report.expectation()
+        );
         self.note(&expectation)?;
         self.caveat()?;
         Ok(())
@@ -480,11 +491,15 @@ fn step_overview(ctx: &mut Ctx<'_>) -> Result<Flow> {
     for state in State::ALL {
         let line = format!(
             "{}  {}  {}",
+            ctx.theme.paint(&format!("{}", state.code()), Ink::Strong),
             ctx.theme
-                .paint(&format!("{}", state.code()), Ink::Strong),
-            ctx.theme.paint(&format!("{:<14}", state.flag()), Ink::Accent),
+                .paint(&format!("{:<14}", state.flag()), Ink::Accent),
             ctx.theme.paint(
-                &format!("{} [percentage {}]", state.describe(), state.percent_use().label()),
+                &format!(
+                    "{} [percentage {}]",
+                    state.describe(),
+                    state.percent_use().label()
+                ),
                 Ink::Muted
             )
         );
@@ -751,20 +766,28 @@ fn step_collision(ctx: &mut Ctx<'_>) -> Result<Flow> {
     ctx.indented(
         2,
         &ctx.theme.paint(
-            &pretty(&format!("{}9;Build finished{}", crate::term::OSC, crate::term::ST)),
+            &pretty(&format!(
+                "{}9;Build finished{}",
+                crate::term::OSC,
+                crate::term::ST
+            )),
             Ink::Code,
         ),
     )?;
     ctx.indented(
         4,
-        &ctx.theme
-            .paint("iTerm2, before 2010: raise a desktop notification", Ink::Muted),
+        &ctx.theme.paint(
+            "iTerm2, before 2010: raise a desktop notification",
+            Ink::Muted,
+        ),
     )?;
     ctx.blank();
     ctx.indented(
         2,
-        &ctx.theme
-            .paint(&pretty(&Report::set(Percent::clamping(50).0).sequence()), Ink::Code),
+        &ctx.theme.paint(
+            &pretty(&Report::set(Percent::clamping(50).0).sequence()),
+            Ink::Code,
+        ),
     )?;
     ctx.indented(
         4,

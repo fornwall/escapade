@@ -143,7 +143,9 @@ pub fn run(catalog: &Catalog, command: &StyleCommand, no_color: bool) -> Result<
         }
         // The only path whose exit status carries a finding, so the only one that does
         // not simply return success.
-        Some(StyleAction::Probe { attrs, format }) => probe::report(&theme, catalog, attrs, *format),
+        Some(StyleAction::Probe { attrs, format }) => {
+            probe::report(&theme, catalog, attrs, *format)
+        }
         Some(StyleAction::Demo {
             force,
             only,

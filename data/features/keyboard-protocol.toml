@@ -1,11 +1,568 @@
-# PLACEHOLDER — being written. See glyph-protocol.toml for the full schema.
+# The kitty keyboard protocol — `CSI > flags u`, and the `CSI … u` key encoding.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslash
+#     sequences survive verbatim.
+#   * Write sequences symbolically: ESC, CSI, SS3, ST, BEL — never embed a real
+#     0x1b byte in this file. `escapade` prints these as text, and a literal
+#     control byte here would be executed by the reader's terminal instead.
+#   * One source line per paragraph. termimad re-wraps each source line on its
+#     own, so a hard-wrapped paragraph wraps twice and comes out ragged.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+#
+# The protocol's functional-key codes live in a Private Use Area, so they are
+# written here as decimal numbers and never as the characters they name: 57358
+# is U+E00E, which renders as tofu for exactly the readers of this file.
 
 id = "keyboard-protocol"
 name = "Keyboard protocol"
 tagline = "Tell Shift+Enter from Enter, see key releases, and know which physical key was pressed."
 status = "de-facto-standard"
+author = "Kovid Goyal, for kitty"
+introduced = "2021-04"
 transport = "CSI"
+spec_url = "https://sw.kovidgoyal.net/kitty/keyboard-protocol/"
 
 summary = '''
-Placeholder. This feature file is being written.
+A terminal keyboard is a byte stream, and the bytes are lossy. Tab and `Ctrl+i` are both `0x09`. Enter and `Ctrl+m` are both `0x0d`. Escape is `0x1b`, which is also the first byte of every escape sequence, so an application cannot tell the key from the introducer without starting a timer and hoping. Nothing at all reports a key **release**. And **Shift+Enter is indistinguishable from Enter** — one carriage return, no modifier field, nowhere to put one.
+
+That last one is not an exotic complaint. It is the most-reported "why can't my terminal app do this" limitation there is, and it is why so many editors, chat clients and REPLs have a strange keybinding where a newline ought to be.
+
+The kitty keyboard protocol fixes it by **progressive enhancement**. An application asks for exactly the extra information it can handle, one flag bit at a time, and every key it did not ask about keeps its legacy encoding byte for byte:
+
+```
+CSI > 1 u      push flags = 1 — disambiguate escape codes
+CSI < u        pop, restoring whatever was there before
+CSI ? u        which flags are in effect?
+CSI ? 1 u      the terminal's answer
+CSI 13 ; 2 u   Shift+Enter, at last
+```
+
+There are five flags, and the specification's order is also the order to adopt them in: **disambiguate escape codes** (1), **report event types** (2), **report alternate keys** (4), **report all keys as escape codes** (8) and **report associated text** (16). Each is useful alone. Each is a *request* rather than a guarantee. And the whole set is a **stack**, so a program that pushes on entry and pops on exit hands the terminal back exactly as it found it, without ever having to learn what the shell that launched it had already set up.
+
+`escapade keys watch` prints every event with the bytes that produced it, which is the fastest way to see the difference: run it once with `--legacy` and once without, pressing Enter and then Shift+Enter each time.
 '''
+
+problem = '''
+The terminal keyboard has been extended before — twice — and worked around far more often than that. Here is what is already out there, and what each of them leaves undone.
+
+**xterm's `modifyOtherKeys`.** A mode (`CSI > 4 ; 2 m`) that makes xterm encode modified keys as `CSI 27 ; <modifiers> ; <codepoint> ~` rather than as a bare control byte. It removes the ambiguity and nothing else: no key releases, no repeat, no alternate keycaps, no associated text, no way to ask what is currently on, and no stack — it is one global mode, so two programs that both want it simply overwrite each other. It is also a different spelling of the same idea, which is why `CSI 27 ; 2 ; 13 ~` and `CSI 13 ; 2 u` are both Shift+Enter depending on who you ask.
+
+**The `CSI u` convention.** Paul "LeoNerd" Evans's *Fix Keyboard Input on Terminals — Please* is where `CSI <codepoint> ; <modifiers> u` comes from, down to the off-by-one in the modifier field: *"we add 1 because by convention, a missing CSI parameter is equivalent to 1, so in the 'unmodified' state the modifier field would be 1."* The kitty protocol keeps that encoding unchanged. What the proposal never had was the rest of a protocol — no negotiation, no capability query, no releases, no way to turn it off again — so it was implemented in pieces, by whoever needed a piece, and an application had no way to find out which piece it was talking to.
+
+**Timers.** The universal workaround for the Escape problem is to read `ESC`, wait 25 to 50 milliseconds, and call it the Escape key if nothing follows. Every input library does this, including the one inside `escapade`, because it has to keep working on terminals that have never heard of any of this. The cost is that Escape is always late, and over a slow link it is late *and* wrong: a genuine `CSI A` can arrive split across the timeout and be delivered as Escape followed by `[A`. Flag 1 deletes the whole problem — Escape becomes `CSI 27 u`, and there is nothing left to guess.
+
+**Terminfo.** It describes what a key sends. It has no vocabulary for what a key *cannot* say, so it cannot express "this terminal has no encoding for Shift+Enter", and no amount of `infocmp` will tell you whether a release event is ever coming.
+
+And then there is the alternative everybody actually picks: **choose a different keybinding**. That is a real answer, it costs nothing, and it is why Ctrl+J, Alt+Enter and two-key chords exist at all. The protocol does not make those obsolete. It means an application no longer has to *design around* a limitation of the wire format — and that the one keybinding your users keep asking for is now expressible.
+'''
+
+how_it_works = '''
+Four sequences, all `CSI`, all ending in `u`, told apart by the byte immediately after the `CSI`:
+
+```
+CSI > flags u          push a new flag set onto the stack
+CSI < number u         pop, restoring the previous one
+CSI = flags ; mode u   set absolutely, without the stack
+CSI ? u                what is in effect right now?
+CSI ? flags u          the terminal's reply
+```
+
+That is the entire control surface. The key *events* the terminal sends back are a fifth shape, described under **The payload** below.
+
+## The flags are a request, not a switch
+
+The bitmask is the whole negotiation. An application sets the bits for the information it knows how to handle, and a terminal that implements only some of them honours the ones it can and ignores the rest — silently, because there is no error reply. Which means the number you pushed and the number in effect are two different numbers, and **the only way to learn the second one is to ask**:
+
+```
+→  CSI > 31 u    ask for all five
+→  CSI ? u       and what did I get?
+←  CSI ? 3 u     two of them
+```
+
+Nothing about a flag is retroactive, and nothing about it is partial within itself: with flag 2 set every key event carries an event type, with it unset none do. So an application can decode against exactly the set it confirmed and never has to write "either this field is here or it is not".
+
+## Push and pop, not set
+
+`CSI = flags ; mode u` exists, takes three modes — `1` replace everything, `2` set these bits, `3` reset these bits — and all three are the wrong sequence for an application to use. Every one of them overwrites state that belongs to somebody else, and none of them can put it back.
+
+Your program is rarely alone. It may have been launched from a shell with its own keyboard integration, from an editor's terminal pane, from inside another full-screen application. Each of those may have enabled the flags *it* needs. Push and pop treat that as a stack: `CSI > 5 u` on entry, `CSI < u` on exit, and whatever was underneath is restored without your program ever having to discover what it was.
+
+The terminal keeps **separate stacks for the main and the alternate screen**, which is what lets a full-screen program push on entry, pop on exit, and leave the main screen's keyboard mode untouched the whole time.
+
+## Detecting support
+
+There is a real query, so nothing here has to be inferred from `TERM` or from a terminal's name. The specification's own procedure is to send the query and then a Primary Device Attributes request as a barrier: *"If an answer for device attributes is received without getting back progressive enhancement answer, the terminal does not support this protocol."*
+
+```
+→  CSI ? u    which flags are set?
+→  CSI c      the barrier
+←  CSI ? 0 u  none — but something answered, which is the point
+←  CSI ? 62 ; 4 c
+```
+
+**`CSI ? 0 u` is a yes.** It reports the flags *currently set*, not the flags the terminal is capable of, and a terminal that implements every one of them answers `0` on a fresh session because nothing has asked for anything yet. Reading that as "supports nothing" is the one mistake this query invites, and it fails in the most misleading direction.
+
+So `escapade keys probe` measures rather than asking twice:
+
+```
+→  CSI ? u     1. baseline — what is set right now?
+→  CSI > 31 u  2. ask for all five
+→  CSI ? u     3. and now?  the difference is what was honoured
+→  CSI < u     4. pop, restoring step 1
+→  CSI c       5. the barrier
+```
+
+The whole burst goes out **before a single reply is read**, pop included. That is deliberate: no timeout, no error and no early return can leave the terminal with flags pushed, because the pop was already on the wire before anything could go wrong. Terminals process input in order, so the two flag replies come back in order and the barrier comes back last.
+
+## What a multiplexer does to the barrier
+
+Inside tmux or Zellij that reasoning collapses, because **the multiplexer answers `CSI c` itself**, from its own emulator. A barrier reply then says nothing whatsoever about the terminal being asked about, and "the barrier came back and the query did not" stops being evidence. `escapade keys probe` reports *inconclusive* there rather than a confident no.
+
+A *positive* still means something inside a multiplexer — it just means something slightly different. Whoever answered in the protocol's own language is the thing this process's keys actually come from, so its answer is the operative one. The flags it accepts may still exceed what it can deliver, because it cannot forward key releases it never receives.
+'''
+
+payload = '''
+There is no payload in the OSC sense; what travels is the key event, and its encoding is the part worth learning by heart.
+
+```
+CSI <key> : <shifted-key> : <base-layout-key>
+    ; <modifiers> : <event-type>
+    ; <text-as-codepoints> u
+```
+
+Only the first field is mandatory. Everything else appears when a flag asked for it, and colons subdivide a field while semicolons separate fields — which is what lets a decoder skip a group it never asked for without losing its place.
+
+## Modifiers are off by one
+
+The modifier field is **`1 + the sum of the bits`**, and nothing else in this protocol carries that offset:
+
+| modifier | value |
+|---|---|
+| shift | 1 |
+| alt | 2 |
+| ctrl | 4 |
+| super | 8 |
+| hyper | 16 |
+| meta | 32 |
+| caps lock | 64 |
+| num lock | 128 |
+
+So Shift alone is `2`, Ctrl+Shift is `6`, and **no modifiers at all is `1`**, which is also what an omitted field means. Reading the field as a plain bitmask makes every unmodified key look like it was pressed with Shift, and it is the single most common decoder bug in this protocol.
+
+`CSI 13 ; 2 u` is Shift+Enter: key code 13, modifiers `1 + 1`.
+
+## Event types
+
+With flag 2 set, the modifier field grows a sub-parameter: `1` press, `2` repeat, `3` release. `CSI 97 ; 1 : 3 u` is the letter `a` coming back **up**, with no modifiers held.
+
+Without that flag a repeat is reported as another press and a release is not reported at all, so an application genuinely cannot know what is being held down — which is why games, modal editors and anything with a chord have wanted this for thirty years.
+
+## Alternate keys
+
+With flag 4 set the key field grows up to two colon-separated alternates: the **shifted key**, present only when Shift is among the modifiers, and the **base layout key**, which is what the same physical key would produce on a standard PC-101 layout. The second is how a shortcut keeps working on a Cyrillic or Dvorak keyboard: the application matches on the base layout key and gets the physical position, while the text the user is typing still arrives in their own layout.
+
+## All keys, and associated text
+
+Flag 8 turns *every* key into an escape code, including plain letters, Enter, Tab, Backspace and the modifier keys pressed on their own — which is the only way to see Shift go down and come back up without anything in between. It also takes the text away, so flag 16 gives it back: a third field of colon-separated codepoints carrying the characters the key produced. The specification defines flag 16 only as an enhancement to flag 8; on its own it is undefined.
+
+## Which keys are actually in the private use area
+
+Worth stating plainly, because it is widely got wrong. The functional-key table **does not contain** Escape, Enter, Tab, Backspace, Insert, Delete, the arrows, Home, End, Page Up, Page Down or F1 to F12. Those keep their legacy encodings — `27u`, `13u`, `9u`, `127u`, `CSI A` through `CSI D`, `CSI 2 ~`, `CSI 3 ~` and so on — and the protocol's contribution to them is the modifier and event-type fields, not a new number.
+
+The private use table starts at **57358** (Caps Lock) and holds only what legacy encodings have no room for at all:
+
+* 57358–57363 — Caps Lock, Scroll Lock, Num Lock, Print Screen, Pause, Menu
+* 57376–57398 — F13 to F35
+* 57399–57415 — the keypad's own digits, operators, Enter and `=`
+* 57417–57427 — the keypad's own arrows, Home, End, Insert, Delete and Begin
+* 57428–57440 — the media and volume keys
+* 57441–57454 — the individual modifier keys, left and right
+
+Those numbers are Private Use Area codepoints, so they are written here as decimals rather than as characters: 57358 is U+E00E, and printing it would show most readers a box.
+
+`escapade keys watch` names every one of these that it can and shows the raw bytes for the rest, which is the honest way to display a key nobody has a word for.
+'''
+
+security = '''
+Nothing in this protocol carries data, addresses a resource or grants a capability. It selects between encodings for input the user is typing anyway, so there is no exfiltration channel here and no injection surface: a terminal that does not know the sequences ignores them, exactly as it ignores any other unrecognised `CSI … u`.
+
+The hazards are all of one kind — **the terminal is left in a state the next program does not expect** — and there are two worth naming individually, because both are genuinely disruptive and one of them takes Ctrl+C away.
+
+## Ctrl+C stops working
+
+This is the real one. With **flag 8** set, the specification is explicit: *"ctrl+c will no longer generate the SIGINT signal, but instead be delivered as a `CSI u` escape code."* The application becomes responsible for interrupting itself. An application that pushes flag 8 and then hangs cannot be interrupted from its own terminal at all, and the user's only remaining options are another tty and the window's close button.
+
+So flag 8 is not a flag to enable speculatively. Enable it when you are handling every key yourself and you have a path that reacts to `CSI 99 ; 5 u`; otherwise leave it off, because flags 1, 2 and 4 give you almost everything and cost nothing.
+
+## Flags left pushed outlive the program
+
+A program that exits without popping hands the next program a keyboard it was not written for. Escape arrives as `CSI 27 u`, releases arrive looking like input, and a shell that has never heard of any of this prints fragments at the prompt. The specification anticipated the crash case and built in an escape hatch: under flag 1, **Enter, Tab and Backspace deliberately keep their legacy bytes**, *"to allow the user to type and execute commands in the shell such as `reset` after a program that sets this mode crashes without clearing it."*
+
+That is a carve-out for a disaster, not a licence to skip the pop. Push on entry, pop on exit, pop on the error path, pop in the signal handler.
+
+## What escapade does about it
+
+* Every probe writes its **pop before it reads a single reply** — the restore is on the wire before anything can fail, so no timeout and no early return can leave flags set.
+* `probe` restores the flags it found rather than clearing them: something else may have pushed deliberately, and a blind `CSI > 0 u` would be exactly the trampling that push and pop exist to prevent.
+* `watch` and `demo` pop on **every** path out, including an early error and a panic: the terminal handle tracks what it pushed and pops it when it is dropped, and a panic hook does the same before the message prints. Restoring the keyboard is not something a code path is allowed to forget.
+* Every reply provoked is drained before returning, so no `CSI ? 3 u` fragment is left behind to be printed at the next shell prompt.
+* Bytes are never echoed back to the terminal raw. Input captured from the keyboard goes through a symbolic renderer that names control bytes rather than emitting them, because printing a captured `ESC` verbatim would hand it back to the terminal as a command instead of showing it.
+'''
+
+caveats = '''
+**The query answers a different question than you asked.** `CSI ? u` reports the flags *currently set*, not the flags the terminal supports. A terminal that implements all five answers `0` on a fresh session. To learn what it can do, push and ask again — the second answer is the honoured set.
+
+**Pushing is asking.** A flag that comes back unset was requested and refused, and an application must not assume it. This matters most for flag 2: a decoder written for release events that never arrive will simply never see a key come up, and will look like it has a stuck-key bug.
+
+**The modifier field is `1 + mods`.** No modifiers is `1`. Treat it as a raw bitmask and every ordinary keypress looks Shift-modified.
+
+**Flag 16 is undefined without flag 8.** Associated text exists because flag 8 took the text away. Setting 16 alone is not a smaller version of the pair; it is unspecified.
+
+**Enter, Tab and Backspace keep their legacy bytes under flag 1** — on purpose, so a wedged terminal can still be typed `reset` into. They only become escape codes, and only then produce release events, once flag 8 is also set.
+
+**Alt is not one thing.** Terminals disagree about whether Alt sets the modifier bit or prefixes an `ESC`, and about whether the Meta key is a separate modifier at all. Under flag 1 the disagreement disappears for keys that produce no text, which is most of what an application binds — but not for `Alt+a` in a terminal configured to send `ESC a`.
+
+**Inside a multiplexer, the multiplexer is the keyboard.** tmux and Zellij read your keystrokes, interpret their own bindings, and re-encode what is left, so what reaches your application is theirs and not the outer terminal's. The two answer very differently: Zellij implements the first flag itself and pushes it outward on your behalf, while tmux does not recognise the negotiation at all and *drops* it rather than relaying it — its own mechanism is the older `extended-keys`, which is off by default and is `modifyOtherKeys` under another name. Probe from where you are and believe whatever answers.
+
+**`CSI <code> ; <mods> u` coming back is not proof of anything.** That encoding predates the protocol and several terminals emit it through `modifyOtherKeys` or `extended-keys-format csi-u` without implementing a single flag of this. The *negotiation* is the protocol; the key encoding is inherited. Ask `CSI ? u`.
+
+**The private use table is smaller than people expect.** Escape, Enter, Tab, Backspace, the arrows, Home, End, Page Up, Page Down and F1 to F12 are *not* in it. A decoder that only handles `CSI <number> u` and forgets `CSI 1 ; <modifiers> A` will miss every modified arrow key.
+
+**Terminals may know flags you do not.** A reply of `63` means a sixth bit exists that your build has never heard of. Report it, do not mask it — `escapade keys probe` prints unknown bits as unknown bits.
+
+**A key with no name is still a key.** Caps Lock is 57358 and the individual modifier keys are 57441 and up. Most input libraries have no name for those at all, and neither does `escapade` — so they arrive as "undecoded", which is a report rather than a failure. Showing the raw bytes is more useful than showing nothing.
+
+## When the protocol is unavailable
+
+1. **Push anyway, then query.** Sending `CSI > 1 u` to a terminal that does not know it costs one ignored sequence and nothing else. Ask afterwards, and decode against the answer.
+2. **Keep the legacy decoder.** The protocol is progressive enhancement, so the legacy paths are not dead code you get to delete — they are what runs on everything that answered nothing.
+3. **Try `modifyOtherKeys` second.** On xterm and the terminals that copied it, `CSI > 4 ; 2 m` gets you the disambiguation half, in xterm's own spelling: `CSI 27 ; <modifiers> ; <codepoint> ~`. It is a mode rather than a stack, so restore it with `CSI > 4 m` and expect to lose whatever another program had set.
+4. **Do not bind what you cannot receive.** An application that requires Shift+Enter on a terminal that cannot express it has no fallback available at runtime; the fallback has to be in the keymap.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+name = "Push"
+purpose = "Ask for a set of enhancements, saving whatever was in effect."
+request = "CSI > <flags> u"
+notes = '''**The sequence a well-behaved application should use.** The terminal keeps a stack, and separate stacks for the main and the alternate screen, so a full-screen program can push on entry and pop on exit without disturbing the main screen's keyboard mode. Omitting the flags is legal and means zero; writing them is clearer. There is no reply — pushing is a request, and the only way to learn what was granted is to query afterwards.'''
+
+[[sequence]]
+name = "Pop"
+purpose = "Put back whatever was in effect before your push."
+request = "CSI < <number> u"
+notes = '''`<number>` defaults to `1`, and one is all a well-structured program ever needs: every push gets its pop, including on the error path and in the signal handler. Send it early if you can — `escapade` writes the pop before reading a single reply, so no timeout or early return can leave the terminal enhanced.'''
+
+[[sequence]]
+name = "Query"
+purpose = "Ask which enhancements are in effect right now — and, in passing, whether the terminal speaks the protocol at all."
+request = "CSI ? u"
+reply = "CSI ? <flags> u"
+notes = '''Safe to send anywhere: a terminal that has never heard of it ignores an unknown `CSI … u`, which is what makes silence meaningful when the query is paired with a barrier. **`CSI ? 0 u` is support**, not the absence of it — it means the terminal speaks the protocol and nothing has asked it for anything yet. The private `?` prefix is what keeps the reply out of the key decoder: `CSI ? 1 u` can never be mistaken for a keypress with code 1.'''
+
+[[sequence]]
+name = "Set"
+purpose = "Change the flags absolutely, without touching the stack."
+request = "CSI = <flags> ; <mode> u"
+notes = '''`<mode>` is `1` to set the given bits and reset every other, `2` to set the given bits and leave the rest, `3` to reset the given bits and leave the rest. All three overwrite state that may belong to the shell, the editor or the multiplexer that launched you, and none of them can restore it. Documented for completeness; prefer push and pop.'''
+
+[[sequence]]
+name = "Key event"
+purpose = "What the terminal sends back once an enhancement is in effect."
+request = "CSI <key> : <shifted> : <base> ; <mods> : <event> ; <text> u"
+reply = "CSI 13 ; 2 u"
+notes = '''Only `<key>` is mandatory; every other field appears because a flag asked for it. Colons subdivide a field, semicolons separate fields, and `<modifiers>` is **`1 + the sum of the bits`** — so the example above is Shift+Enter, and a bare `CSI 97 u` is an unmodified `a`. Keys that already had a `CSI` form keep it and gain the modifier field instead: a shifted Up arrow is `CSI 1 ; 2 A`, not a `u` sequence.'''
+
+[[sequence]]
+name = "Primary Device Attributes — the barrier"
+purpose = "Make silence measurable: every terminal since the VT100 answers this, so an answer here with none to the query is a real no rather than a slow link."
+request = "CSI c"
+reply = "CSI ? 62 ; 4 c"
+notes = '''The specification names this procedure itself: query the enhancement status, then ask for device attributes, and *"if an answer for device attributes is received without getting back progressive enhancement answer, the terminal does not support this protocol"*. Terminals process input in order, so the ordering is the whole proof. Inside a multiplexer the proof is void, because the multiplexer answers this from its own emulator.'''
+
+# ---------------------------------------------------------------------------
+# Parameters.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "flags"
+applies_to = "push, set, query reply"
+default = "0"
+description = "The progressive-enhancement bitmask: `1` disambiguate escape codes, `2` report event types, `4` report alternate keys, `8` report all keys as escape codes, `16` report associated text. `31` is all five. Bits beyond those are not an error — they are a terminal that knows something this build does not."
+
+[[param]]
+key = "mode"
+applies_to = "set"
+default = "1"
+description = "How `CSI = flags ; mode u` combines with what is already there: `1` replace everything, `2` set these bits, `3` reset these bits. All three are destructive to another program's state; push and pop are not."
+
+[[param]]
+key = "number"
+applies_to = "pop"
+default = "1"
+description = "How many stack entries to discard. One per push is the only pattern worth writing; anything else means a program is unwinding somebody else's state."
+
+[[param]]
+key = "unicode-key-code"
+applies_to = "key events"
+default = ""
+description = "The key, as the codepoint its unshifted keycap produces — `97` for the `a` key, whatever Shift or the current layout would make of it. Keys with no printable form use the legacy numbers (`9` Tab, `13` Enter, `27` Escape, `127` Backspace) or a functional-key code from 57358 up."
+
+[[param]]
+key = "alternate-key-codes"
+applies_to = "key events, with flag 4"
+default = ""
+description = "Up to two colon-separated extras after the key: the **shifted key**, present only when Shift is among the modifiers, and the **base layout key**, what the same physical key would produce on a standard PC-101 layout. The second is what makes a shortcut survive a Cyrillic or Dvorak keyboard."
+
+[[param]]
+key = "modifiers"
+applies_to = "key events"
+default = "1"
+description = "`1 + the sum of the bits`: shift 1, alt 2, ctrl 4, super 8, hyper 16, meta 32, caps lock 64, num lock 128. **No modifiers is 1, not 0**, and an omitted field means the same. Reading it as a plain bitmask makes every ordinary keypress look shifted."
+
+[[param]]
+key = "event-type"
+applies_to = "key events, with flag 2"
+default = "1"
+description = "A sub-parameter of the modifier field: `1` press, `2` repeat, `3` release. Seeing anything but `1` is itself proof that the flag took effect."
+
+[[param]]
+key = "text-as-codepoints"
+applies_to = "key events, with flags 8 and 16"
+default = ""
+description = "Colon-separated decimal codepoints of the text the key produced, carried inside the escape code because flag 8 took the text out of the stream. Defined only as an enhancement to flag 8."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "kitty"
+kind = "terminal"
+url = "https://sw.kovidgoyal.net/kitty/keyboard-protocol/"
+notes = "Where the protocol comes from, and the reference implementation. Its documentation also carries the list of other implementers this file's matrix starts from."
+
+[[user]]
+name = "crossterm"
+kind = "library"
+url = "https://github.com/crossterm-rs/crossterm"
+notes = "Rust's most-used terminal input library. Exposes the flags as `PushKeyboardEnhancementFlags`, which is where most Rust TUIs meet this protocol."
+
+[[user]]
+name = "Neovim"
+kind = "application"
+url = "https://neovim.io"
+notes = "Uses the protocol to tell keys apart that Vim has had to conflate since 1991 — Ctrl+I from Tab, Ctrl+[ from Escape."
+
+[[user]]
+name = "Helix"
+kind = "application"
+url = "https://helix-editor.com"
+notes = "A modal editor, which is exactly the case release and repeat events were missing for."
+
+[[user]]
+name = "fish"
+kind = "application"
+url = "https://fishshell.com"
+notes = "A shell that enables the protocol for its own line editor, which is why keybindings that were impossible in a terminal became bindable in fish."
+
+[[user]]
+name = "Textual, Bubble Tea, vaxis, notcurses, tcell"
+kind = "library"
+url = "https://sw.kovidgoyal.net/kitty/keyboard-protocol/"
+notes = "The application-framework layer, across Python, Go, Zig and C. Between them they are how most programs get this without ever writing `CSI > 1 u`."
+
+[[user]]
+name = "escapade"
+kind = "application"
+url = "https://github.com/fornwall/escapade"
+notes = "`escapade keys watch` is the `showkey` of this protocol: every event, with the bytes that produced it, and a count of the distinct encodings each key produced."
+
+# ---------------------------------------------------------------------------
+# Terminal support matrix.
+#
+# status: yes | partial | flag | passthrough | no | unknown
+#   yes         implemented and on by default
+#   partial     implemented with meaningful gaps (say which in `notes`)
+#   flag        implemented but off until the user opts in
+#   passthrough multiplexer: works only when explicitly configured to forward
+#   no          no known implementation
+#   unknown     nobody has checked
+#
+# kitty's own documentation carries a list headed "In addition to kitty, this
+# protocol is also implemented in:", and that list is where several rows below
+# start. It is not exhaustive — Contour implements the protocol and is not on it
+# — so it is treated as a lead to check rather than as the answer.
+#
+# Flag-level coverage is stated only where a changelog or a source enumeration
+# was actually read. "All five" below means the five bits were found declared and
+# handled, not that every edge of every flag was exercised by hand.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+since = "0.20.0 (2021-04-19)"
+notes = "Where the protocol comes from, and the reference implementation: all five flags, both stacks, the query. Its documentation also carries the list of other implementers, which is the starting point for several rows here."
+source = "https://sw.kovidgoyal.net/kitty/keyboard-protocol/"
+
+[[support]]
+terminal = "ghostty"
+status = "yes"
+since = "1.0.0 (2024-12-26)"
+notes = "All five flags were already present in the first public release — `src/terminal/kitty/key.zig` declares them as a packed five-bit struct, with a `FlagStack` implementing push, pop and set. No configuration option gates it, which is the right answer: the application opts in by sending the sequence, so a second gate in the terminal would only make the negotiation unreliable."
+source = "https://github.com/ghostty-org/ghostty/blob/main/src/terminal/kitty/key.zig"
+
+[[support]]
+terminal = "foot"
+status = "yes"
+since = "1.10.3 (December 2021)"
+notes = "Arrived in two steps, and the changelog names the modes in the specification's own words: 1.10.2 added \"Disambiguate escape codes (mode `0b1`)\", and 1.10.3 added the other four. So a foot older than 1.10.3 answers the query, honours flag 1, and honours nothing else — which is exactly the case a probe that only asks \"supported?\" gets wrong."
+source = "https://codeberg.org/dnkl/foot/raw/branch/master/CHANGELOG.md"
+
+[[support]]
+terminal = "alacritty"
+status = "yes"
+since = "0.13.0 (2023-12-27)"
+notes = "\"Support for kitty's keyboard protocol\", in one changelog line. Its `TermMode` bitflags declare all five bits, and Rio's implementation is a direct descendant of the pull request that landed it here. No configuration gate."
+source = "https://github.com/alacritty/alacritty/blob/master/CHANGELOG.md"
+
+[[support]]
+terminal = "rio"
+status = "yes"
+since = "0.0.17 (2023-08-29); on by default from 0.2.3 (2025-01-13)"
+notes = "All five flags, inherited from Alacritty's implementation. Worth knowing which Rio you are on: it sat behind `use-kitty-keyboard-protocol` for over a year, became the default in 0.2.3, and in 0.2.4 the option was removed outright — the changelog entry reads \"Breaking: Rio now doesn't allow anymore disable kitty keyboard protocol.\""
+source = "https://rioterm.com/changelog"
+
+[[support]]
+terminal = "contour"
+status = "yes"
+since = "declared in 0.4.0.6245 (2023-12-19); trustworthy from 0.6.3 (2026-04-09)"
+notes = "All five flags are declared in `src/vtbackend/InputGenerator.h` and have been since 0.4.0 — but 0.6.3 shipped a long run of corrections to this protocol specifically (the `CSI u` codes for F1 to F4, Home and End encoding, release events, lock modifiers, Unicode case folding), so \"declared early, dependable late\" is the honest reading. Not on kitty's own list of implementers, which is why that list is a lead rather than an answer."
+source = "https://github.com/contour-terminal/contour/blob/master/src/vtbackend/InputGenerator.h"
+
+[[support]]
+terminal = "wezterm"
+status = "flag"
+since = "20220624-141144-bd1b7c5d"
+notes = "The only implementation found that is **off by default**: `enable_kitty_keyboard` defaults to false, and the documentation says so in as many words. Which of the five flags it covers was not established — the option's documentation names none of them, and an issue tracker is not a support claim — so treat the per-flag detail as unknown and query after pushing."
+source = "https://wezterm.org/config/lua/config/enable_kitty_keyboard.html"
+
+[[support]]
+terminal = "iterm2"
+status = "yes"
+since = "3.5.4beta2 (2024-09-09)"
+notes = "\"Add support for the Kitty key reporting protocol\", in the changelog for that beta; `VT100TerminalKeyReportingFlags` declares all five bits. The first *stable* build carrying it is almost certainly 3.5.5, but iTerm2's changelog does not say so and that mapping is inference rather than a source."
+source = "https://github.com/gnachman/iTerm2/blob/master/sources/VT100/VT100Terminal.h"
+
+[[support]]
+terminal = "vscode"
+status = "yes"
+since = "VS Code 1.109 (January 2026)"
+notes = "The release notes are unambiguous: \"The Kitty keyboard protocol has been implemented and will be rolling out to stable this release.\" All five flags, in xterm.js's `KittyKeyboard.ts`, controlled by `terminal.integrated.enableKittyKeyboardProtocol` and on by default. One caveat for anyone embedding xterm.js directly rather than using VS Code: this landed in the 6.1.0 line, and the published `latest` is still 6.0.0."
+source = "https://code.visualstudio.com/updates/v1_109"
+
+[[support]]
+terminal = "warp"
+status = "yes"
+notes = "A vendor claim rather than a source reading, because Warp is closed: \"Warp supports the Kitty keyboard protocol (CSI u progressive enhancement)… When a running app advertises that it supports the protocol, Warp emits the extended escape sequences automatically. No configuration is required.\" Which of the five flags that covers, and when it arrived, could not be established. Push and query."
+source = "https://docs.warp.dev/terminal/more-features/full-screen-apps/"
+
+[[support]]
+terminal = "windows-terminal"
+status = "partial"
+since = "Preview 1.25.622.0 (2026-03-05)"
+notes = "**Preview channel only.** All five flags with separate main and alternate screen stacks, merged in February 2026 — but the stable 1.24 line does not have it, so most Windows Terminal users do not. Known open gaps in the implementation as well: AltGr combinations and F13 to F20."
+source = "https://github.com/microsoft/terminal/pull/19817"
+
+[[support]]
+terminal = "konsole"
+status = "partial"
+since = "merged 2026-05-04; in the 26.08 beta and release candidate"
+notes = "**Not in a final release yet.** The implementation is complete — push, pop, query and set, with per-screen flag stacks and alternate keys resolved through xkbcommon — and it is in the `v26.07.80` beta and the `v26.07.90` release candidate, with 26.08.0 due on 2026-08-20. Filed as partial for availability rather than for capability; this row should become a plain yes shortly."
+source = "https://invent.kde.org/utilities/konsole/-/commit/1983d2b4735d6b61b74cf85854acc1cb4d2445d5"
+
+[[support]]
+terminal = "zellij"
+status = "partial"
+since = "0.41.0 (2024-11-04)"
+notes = "**Flag 1 only**, and implemented rather than forwarded. Zellij parses the `>`, `<`, `?` and `=` forms from a pane and answers the query itself with `CSI ? 1 u` or `CSI ? 0 u`, but its own source comment says \"Zellij only supports the first 'progressive enhancement' layer\" — it stores a single boolean rather than a stack, so there are no event types, no alternate keys and no associated text. It pushes `CSI > 1 u` to the terminal beyond it on startup and pops on teardown, and re-encodes keys rather than passing bytes through. `support_kitty_keyboard_protocol` defaults to true when the host terminal supports it."
+source = "https://github.com/zellij-org/zellij/pull/3383"
+
+[[support]]
+terminal = "xterm"
+status = "no"
+notes = "The terminal with the other answer, and it is worth being precise about what it does have. `ctlseqs`, current through patch #410 of April 2026, documents `CSI u` only as **restore cursor** — there is no `CSI > flags u`, no `CSI ? u` and no key encoding of this shape anywhere in xterm's patch log, 1996 to 2026. What xterm has instead is `modifyOtherKeys`, set with `CSI > 4 ; 2 m`, encoding a modified key as `CSI 27 ; <modifiers> ; <codepoint> ~`. Its own documentation warns that the alternative `CSI u` spelling of that is something \"applications may confuse with `CSI u` (restore-cursor)\", which is a fair objection and is exactly why the kitty protocol's negotiation lives behind a private prefix."
+source = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.txt"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "no"
+notes = "VTE has an open issue for it — #2601, \"Implementing the Kitty keyboard protocol\", opened in October 2022 and still open with no milestone. That covers GNOME Terminal and everything else built on VTE."
+source = "https://gitlab.gnome.org/GNOME/vte/-/issues/2601"
+
+[[support]]
+terminal = "tmux"
+status = "no"
+notes = "**Neither implements it nor forwards it**, and the second half is the part that surprises people. tmux's CSI dispatch table has exactly one entry for a final `u` — restore cursor — and none at all for the `>`, `<`, `?` or `=` intermediates, so `CSI > 1 u` from a program inside tmux is an unrecognised sequence and is *dropped*, never relayed outward.\n\nWhat tmux has instead is the older mechanism: `extended-keys` (`off` by default, described in its own manual as \"the equivalent of the `modifyOtherKeys` xterm resource\") and `extended-keys-format` (`xterm` by default, `csi-u` optional). With `csi-u`, Ctrl+Shift+A arrives as `CSI 65 ; 6 u` — which is the fixterms *format* and not this protocol: no progressive-enhancement flags, no stack, no query, no event types, no alternate keys, no associated text. Added in 3.2, revamped in 3.5, and unchanged in that respect through master."
+source = "https://github.com/tmux/tmux/blob/master/input.c"
+
+[[support]]
+terminal = "screen"
+status = "no"
+notes = "No mention of the protocol anywhere in the source through 5.0.0, and `ansi.c`'s handler for a final `u` is restore cursor. Screen has no `modifyOtherKeys` equivalent either, so there is no extended keyboard mechanism of any kind here."
+source = "https://git.savannah.gnu.org/cgit/screen.git/tree/src/ansi.c"
+
+[[support]]
+terminal = "mintty"
+status = "no"
+notes = "The most interesting `no` in the table, because mintty *does* emit `CSI <code> ; <mods> u`. That is the fixterms format reached through xterm's `modifyOtherKeys`, not this protocol: its CSI dispatch handles a bare `u` (restore cursor) and two intermediate forms, and has no handler for `>`, `<` or `?` with a final `u`. Seeing `CSI 97 ; 5 u` come out of a terminal is not evidence that it speaks the kitty protocol — ask it."
+source = "https://github.com/mintty/mintty/blob/master/src/termout.c"
+
+[[support]]
+terminal = "st"
+status = "no"
+notes = "No mention of the protocol in the source; `csihandle`'s final `u` is restore cursor, and any unrecognised CSI reaches `erresc: unknown csi` and is discarded. Patches exist for most things in st and were not audited."
+source = "https://git.suckless.org/st/file/st.c.html"
+
+[[support]]
+terminal = "wayst"
+status = "no"
+notes = "Implements xterm's `modifyOtherKeys` instead; its final `u` is restore cursor, and the only occurrences of \"kitty\" in the source are shell-integration comments."
+source = "https://github.com/91861/wayst/blob/master/src/vt_core.c"
+
+[[support]]
+terminal = "conemu"
+status = "no"
+notes = "No implementation, and no `modifyOtherKeys` either. Worth a warning for anyone grepping the source: ConEmu's matches for \"kitty\" are all references to **KiTTY**, the PuTTY-derived ssh client, which is an unrelated program with a confusingly similar name."
+source = "https://github.com/Maximus5/ConEmu/blob/master/src/ConEmuHk/Entry.cpp"
+
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "Comprehensive keyboard handling in terminals — the specification"
+url = "https://sw.kovidgoyal.net/kitty/keyboard-protocol/"
+
+[[resource]]
+title = "Fix Keyboard Input on Terminals — Please: where the CSI u encoding comes from"
+url = "https://www.leonerd.org.uk/hacks/fixterms/"
+
+[[resource]]
+title = "xterm's modifyOtherKeys, the other answer to the same problem"
+url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[resource]]
+title = "foot's changelog — the two releases that added the five flags, named mode by mode"
+url = "https://codeberg.org/dnkl/foot/raw/branch/master/CHANGELOG.md"
+
+[[resource]]
+title = "crossterm's keyboard enhancement flags — the protocol as most Rust TUIs meet it"
+url = "https://docs.rs/crossterm/latest/crossterm/event/struct.KeyboardEnhancementFlags.html"
+
+[[resource]]
+title = "tmux's extended-keys and extended-keys-format — the other thing that emits CSI u"
+url = "https://man.openbsd.org/tmux#extended-keys"

@@ -158,7 +158,10 @@ mod tests {
 
     #[test]
     fn the_summary_counts_in_the_right_units() {
-        assert_eq!(analyse("a").summary(), "1 codepoint in 1 grapheme cluster, 1 column wide");
+        assert_eq!(
+            analyse("a").summary(),
+            "1 codepoint in 1 grapheme cluster, 1 column wide"
+        );
         assert_eq!(
             analyse("ab").summary(),
             "2 codepoints in 2 grapheme clusters, 2 columns wide"
