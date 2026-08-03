@@ -60,7 +60,14 @@ pub struct Rgb {
 }
 
 impl Rgb {
-    /// Black, and the value used when a channel is missing.
+    /// Black.
+    ///
+    /// `#[cfg(test)]` along with [`Rgb::from_rgb8`] below: nothing in the running
+    /// program constructs a colour, it only ever parses one the terminal sent.
+    /// Both are here because they make the tests read in the 8-bit hex everyone
+    /// actually thinks in, and a colour written `Rgb::new(0x1e1e, 0x1e1e, 0x2e2e)`
+    /// is one nobody can check against `#1e1e2e` at a glance.
+    #[cfg(test)]
     pub const BLACK: Self = Self { r: 0, g: 0, b: 0 };
 
     /// A colour from three 16-bit channels.
@@ -73,6 +80,7 @@ impl Rgb {
     ///
     /// `0xab` becomes `0xabab`, not `0x00ab`: an 8-bit channel is two hex digits
     /// of a four-digit value, so it scales rather than being padded.
+    #[cfg(test)]
     #[must_use]
     pub const fn from_rgb8(r: u8, g: u8, b: u8) -> Self {
         Self {
@@ -158,6 +166,7 @@ impl Rgb {
 }
 
 /// Widens an 8-bit channel to 16 bits by repeating it: `0xab` to `0xabab`.
+#[cfg(test)]
 const fn widen8(value: u8) -> u16 {
     (value as u16) << 8 | (value as u16)
 }
@@ -374,11 +383,9 @@ pub fn parse_reply(payload: &str) -> Result<Reported> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests are allowed to unwrap; clippy.toml sets allow-unwrap-in-tests"
-)]
+// clippy.toml sets allow-unwrap-in-tests; the attribute covers the helpers in
+// here that are not themselves `#[test]` functions.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

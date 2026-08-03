@@ -24,6 +24,7 @@
 //! whatever runs next.
 
 use std::{
+    fmt::Write as _,
     process::ExitCode,
     time::{Duration, Instant, SystemTime},
 };
@@ -41,7 +42,7 @@ use crate::{
         },
         wrap,
     },
-    input::{Event, InputReader, KeyCode, KeyEventKind, Reply},
+    input::{Event, InputReader, KeyCode, KeyEventKind},
     term::Term,
     theme::{Ink, Theme},
 };
@@ -181,10 +182,10 @@ fn watch(
                     last_poll = Instant::now();
                 }
             }
-            // A timeout, an unremarkable event, or stdin closing. The last of
-            // those ends the watch: there is nobody left to press Ctrl-C.
-            Ok(None) => {}
-            Ok(Some(_)) => {}
+            // A timeout, or an event this loop has no use for. Nothing to do
+            // either way; the clock is checked below regardless.
+            Ok(_) => {}
+            // stdin closed: there is nobody left to press Ctrl-C.
             Err(_) => return Ok(ExitCode::SUCCESS),
         }
 
@@ -292,11 +293,12 @@ fn text_line(
             || "no answer".to_owned(),
             |reported| format!("{} {}", reported.rgb.hex(), reported.raw),
         );
-        line.push_str(&format!(
+        let _ = write!(
+            line,
             "  {} {}",
             theme.paint(&answer.target.label(), Ink::Strong),
             theme.paint(&value, Ink::Code)
-        ));
+        );
     }
     line.push_str(&theme.paint(&format!("  ({})", trigger.note()), Ink::Muted));
     // Raw mode means a bare newline does not return the cursor to column one.
@@ -357,15 +359,17 @@ fn header(
     let names: Vec<String> = targets.iter().map(|target| target.label()).collect();
     let mut out = String::new();
     out.push_str("\r\n");
-    out.push_str(&format!(
+    let _ = write!(
+        out,
         "  {}\r\n",
         theme.paint("Watching for colour changes", Ink::Title)
-    ));
-    out.push_str(&format!(
+    );
+    let _ = write!(
+        out,
         "  {} {}\r\n",
         theme.paint("colours:", Ink::Muted),
         theme.paint(&names.join(", "), Ink::Code)
-    ));
+    );
 
     // The honesty requirement: say which mechanism is in use, and if it is the
     // slow one, say why and how slow.
@@ -373,18 +377,20 @@ fn header(
         Support::Yes => ("instant — the terminal reports changes itself", Ink::Good),
         Support::No | Support::Unknown => ("polling", Ink::Warn),
     };
-    out.push_str(&format!(
+    let _ = write!(
+        out,
         "  {} {}\r\n",
         theme.paint("updates:", Ink::Muted),
         theme.paint(label, ink)
-    ));
-    for line in wrap(notification.explain(POLL_INTERVAL), theme.width().saturating_sub(4)) {
-        out.push_str(&format!("    {}\r\n", theme.paint(&line, Ink::Muted)));
+    );
+    for line in wrap(&notification.explain(POLL_INTERVAL), theme.width().saturating_sub(4)) {
+        let _ = write!(out, "    {}\r\n", theme.paint(&line, Ink::Muted));
     }
-    out.push_str(&format!(
+    let _ = write!(
+        out,
         "  {}\r\n\r\n",
         theme.paint("press q or Ctrl-C to stop", Ink::Muted)
-    ));
+    );
     term.write(&out)?;
     term.flush()
 }
@@ -435,17 +441,12 @@ fn nothing_to_watch(theme: &Theme, command: &ColorCommand, answers: &Answers) ->
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests are allowed to unwrap; clippy.toml sets allow-unwrap-in-tests"
-)]
+// clippy.toml sets allow-unwrap-in-tests; the attribute covers the helpers in
+// here that are not themselves `#[test]` functions.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::{
-        features::color::value::parse_reply,
-        input::Modifiers,
-    };
+    use crate::features::color::value::parse_reply;
 
     /// A reading with one colour in it.
     fn reading(payload: &str, target: Target) -> Answers {
@@ -546,8 +547,6 @@ mod tests {
         assert!(!quits(KeyCode::Char('d'), false));
         assert!(!quits(KeyCode::Char('x'), true));
         assert!(!quits(KeyCode::Enter, false));
-        // The modifier field really is the ctrl one.
-        assert!(!Modifiers::NONE.ctrl);
     }
 
     #[test]

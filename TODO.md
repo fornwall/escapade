@@ -2,13 +2,21 @@
 
 ## Unimplemented subcommands
 
-`unscroll` has since been implemented and `capture` was implemented then dropped,
-and **both disproved what this file claimed about them** — see "Corrections"
-below. One remains: it has its CLI, module stub and wiring already in place — they parse, appear in `--help`, and their `run` currently returns
-`bail!("… is not implemented yet")`. Each needs a real implementation plus a real
-`data/features/*.toml`.
+**None.** `unscroll`, `decode`, `color` and `clipboard` have all been
+implemented, `capture` was implemented then dropped, and **two of those disproved
+what this file claimed about them** — see "Corrections" below. No subcommand
+returns `bail!("… is not implemented yet")` any more.
 
-They should follow the conventions the built features share, none of which are
+`clipboard` (OSC 52) turned out to have one thing this file did not know about,
+and it changes what a probe can do: terminal authors have agreed on a **clipboard
+extension** that puts `52` among the parameters of the Primary Device Attributes
+reply, and requires a terminal to withdraw it when the user disables clipboard
+access. So the barrier every probe here already sends doubles as the capability
+question, and the answer describes the session rather than a version number. See
+`features/clipboard/probe.rs` and the spec at
+<https://github.com/contour-terminal/vt-extensions/blob/master/clipboard-extension.md>.
+
+Anything built later should follow the conventions the built features share, none of which are
 written down anywhere but the code:
 
 * `explain` calls `crate::features::explain::render` — features never write their
@@ -28,7 +36,10 @@ written down anywhere but the code:
   source line independently, so pre-wrapped prose wraps twice and reads ragged.
   No literal control bytes and no invisible characters; tests enforce both.
 
-### `escapade decode` — bytes back into named sequences
+### `escapade decode` — bytes back into named sequences — **built**
+
+Kept as written, because it is the specification the implementation was built
+from and the reasoning is worth seeing next to the result.
 
 The inverse of the `demo` verb. Instead of showing a sequence and then its effect,
 take an effect you already have — a byte stream that rendered wrong — and name the
@@ -166,17 +177,21 @@ turned out to be wrong.
 
 ## Known issues
 
-* **Unimplemented commands are visible in `--help`** and fail at runtime with
-  "not implemented yet". Either implement them or add `#[command(hide = true)]`
-  to `decode` in `src/cli.rs` before any release. (`unscroll` is done and needs no
-  hiding; `capture` has been dropped.)
+* ~~**Unimplemented commands are visible in `--help`**~~ — fixed. Every
+  subcommand in `--help` now does something; nothing needs `#[command(hide =
+  true)]`.
 * **Name collision:** `db::Support` (a support-matrix row) and
   `features::Support` (a three-state probe verdict) are unrelated types with the
   same name. It compiles because they are imported explicitly, but it reads
   badly. `features::Support` wants renaming — `Verdict` is taken locally inside
   `glyph_protocol`, so it needs a third name.
-* **Nothing is committed to git.** The repository has no history, so a bad edit
-  cannot be recovered — this already cost a retyped block of `cli.rs`.
+* **`escapade color`'s one-shot report never asks for the colour scheme.**
+  `report::run` passes `None` where the mode 2031 scheme would go, so
+  `Basis::Reported` is only ever reached under `--watch` and `--is-dark` decides
+  from luminance even on a terminal that would have answered outright. Fixing it
+  means either a second round trip or threading the `CSI ? 996 n` request into
+  `query::round_trip` alongside the colour queries; the latter is better and
+  needs the reply matcher to know about a non-OSC answer.
 * **`--debug` as a shorthand for `--format debug`** was requested and not done.
   It belongs in one pass across all fourteen probes rather than one feature
   diverging.
@@ -185,9 +200,11 @@ turned out to be wrong.
   database has no equivalent. Related: export the database as JSON, publish a
   schema, and license the data CC BY 4.0 so it can be shared with the two
   projects already doing this.
-* **`modes::ModeState` in `doctor` duplicates `grapheme::ModeState`**, because
-  grapheme's carries mode numbers as `u16` and the sentinel mode `9876543` does
-  not fit. Widen grapheme's to `u32` and delete the duplicate.
 * **The env-marker terminal-identification table is duplicated** across probe
   modules, and at one point the copies disagreed. `doctor/identity.rs` is now the
-  most complete version; the others should migrate to it.
+  most complete version; the others should migrate to it. `clipboard/probe.rs`
+  is the first to do so — it calls `identity::family` and translates the two
+  family tokens that differ from registry ids, rather than carrying a fourth copy
+  of the keyword table. The `ENV_MARKERS` list is still per-module, because that
+  one maps environment variables rather than names and `identity` has no
+  equivalent; a shared version of *that* is the remaining piece of this.

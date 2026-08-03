@@ -1,11 +1,391 @@
-# PLACEHOLDER — being written. See glyph-protocol.toml for the full schema.
+# Colour queries
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * TOML literal strings (three single quotes) for prose, so backslash
+#     sequences survive verbatim.
+#   * Sequences written symbolically: OSC, CSI, ST, BEL — never a real 0x1b byte.
+#   * One source line per paragraph: termimad re-wraps each source line on its
+#     own, so a pre-wrapped paragraph wraps twice and reads ragged.
+#   * Every `[[support]]` row should carry a `source`.
+#
+# The matrix below is about **asking** — the OSC queries, which are the feature.
+# Mode 2031, which reports changes, is much newer and much narrower; which
+# terminals implement it is stated per row in the notes rather than given a
+# second matrix, because a row can only carry one status.
+#
+# Rows marked `unknown` are an admission, not a claim: nobody has checked them
+# against a primary source. Please do not upgrade one to `no` without testing.
 
 id = "color"
 name = "Colour queries"
 tagline = "Ask the terminal what colour it actually is, and be told the moment the user changes it."
-status = "experimental"
+status = "de-facto-standard"
+introduced = "1997 (xterm), 2022 (mode 2031)"
 transport = "OSC"
+spec_url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
 
 summary = '''
-Placeholder. This feature file is being written.
+Every program that colours its own output is choosing colours against a background it has never seen. That is why so much tooling is grey-on-grey somewhere: a palette picked on a dark terminal, shipped, and then run on a light one.
+
+The terminal knows, and it will say if asked. `OSC 11 ; ? ST` asks for the default background colour, and the terminal answers on standard input with `OSC 11 ; rgb:1e1e/1e1e/2e2e ST`. The same trick works for the foreground, the cursor, the selection colours and all 256 palette entries — the sequence that *sets* a colour, with a `?` where the colour would go, *reports* it instead.
+
+That is the entire mechanism, and it is why the feature is nearly universal while much newer ones are not: xterm did not have to invent anything. The dynamic-colour sequences already existed to set colours, and the query is one extra character.
+
+The second half is newer and rarer. An answer is only correct until the user switches their theme, and **DEC private mode 2031** turns a snapshot into a subscription: set it, and the terminal sends `CSI ? 997 ; 1 n` for dark or `CSI ? 997 ; 2 n` for light every time the scheme changes, unprompted, for as long as the mode stays on.
 '''
+
+problem = '''
+The alternatives are all guesses, and each fails in its own way.
+
+**`COLORFGBG`** is set by a handful of terminals — rxvt, Konsole, and a few that copied them — as something like `15;0`, meaning white on black. It is an environment variable, which means it is *inherited*: it survives `ssh`, `sudo -E`, `tmux attach` from a different terminal, and being exported in a shell profile long after the terminal it described was closed. It is also missing entirely on most terminals, and ambiguous where it exists, since `0` is a palette index and what colour index 0 actually is depends on the theme.
+
+**`TERM`** says nothing about a theme at all. It names a terminfo entry, and `xterm-256color` is what you get on a light terminal and a dark one alike.
+
+**Assuming dark** is the honest name for what most programs do. It is right often enough to survive and wrong often enough to be a recurring bug report, and it cannot be fixed by trying harder — the information simply is not there.
+
+**Asking is the only method that is correct by construction**, because the answer comes from the thing being asked about, in band, in this session, right now. It also degrades honestly: a terminal that does not implement the query says nothing, and silence is distinguishable from an answer, so a program can fall back rather than guess wrongly.
+'''
+
+how_it_works = '''
+```
+OSC 10 ; ? ST              default foreground
+OSC 11 ; ? ST              default background
+OSC 12 ; ? ST              text cursor
+OSC 17 ; ? ST              selection background
+OSC 19 ; ? ST              selection foreground
+OSC 4 ; <index> ; ? ST     palette entry, 0 to 255
+
+OSC <same number> ; rgb:<r>/<g>/<b> ST      the reply
+```
+
+The numbers are xterm's dynamic colours, and the ones in the middle are easy to get wrong: 17 is the *highlight background* and 19 the *highlight foreground*, with 18 being the Tektronix cursor in between. "Highlight" is the older name for what everything now calls the selection.
+
+**The reply is XParseColor syntax**, which xterm's `ctlseqs` defers to rather than defining, and it contains the one real trap in this feature. Each channel is **one to four hex digits**, and the digits given are the *most significant* ones — the value is scaled across the full range rather than padded on the left. So `rgb:f/0/0` is **full red**, identical to `rgb:ffff/0000/0000`. A naive `u16::from_str_radix` per field reads `f` as 15 out of 65535 and turns full red into near-black, at which point a bright terminal is reported as a dark one and every light/dark decision inverts.
+
+**The older `#` form does the opposite.** `#RGB`, `#RRGGBB`, `#RRRGGGBBB` and `#RRRRGGGGBBBB` are left-justified and zero-filled, so `#f00` is `#ef0000` rather than `#ff0000`. XParseColor(3) states the difference outright: in the `#` form, when fewer than 16 bits are given they "represent the most significant bits of the value (unlike the `rgb:` syntax, in which values are scaled)". Both forms are in circulation, so both have to be accepted, and they cannot share a parser.
+
+**Every query needs a barrier.** A terminal that does not implement the query says nothing at all, which is indistinguishable from a terminal that is merely slow — over ssh, under load, or behind a multiplexer. Sending one Primary Device Attributes request (`CSI c`) after the colour queries fixes that: every terminal since the VT100 answers it, and terminals process input in order, so a device-attributes reply arriving with no colour reply in front of it proves the terminal reached the end of the queue and declined. Without the barrier, "no" and "not yet" are the same event.
+
+**Batch the queries.** They can all go out before anything is read, and the replies are matched up by the OSC number they carry — for `OSC 4`, by the index as well, which is why the reply repeats it. One round trip for six colours costs the same wait as one, and for the whole 256-entry palette that is the difference between a command and a hang.
+
+**Mode 2031 is a subscription, not a query.** `CSI ? 2031 h` sets it, `CSI ? 2031 l` resets it, and while it is on the terminal sends `CSI ? 997 ; Ps n` — 1 dark, 2 light — every time the scheme changes. `CSI ? 996 n` asks for the current scheme once, on demand, and is answered in the same shape. Note that the request and the report are deliberately different numbers.
+
+**Ask DECRQM before trusting the subscription.** A terminal that has never heard of a private mode discards `CSI ? 2031 h` in silence, so setting the mode never fails and never confirms. `CSI ? 2031 $ p` asks whether the mode exists — but a DECRQM answer is worth nothing on its own, because iTerm2 answers modes that do not exist, so the query has to be paired with a control query for an impossible mode number. See `escapade grapheme explain`, where the same control is used for mode 2027.
+'''
+
+payload = '''
+Colour specifications, in the two forms terminals actually send:
+
+| reply | red channel | normalised |
+|-------|-------------|------------|
+| `rgb:f/0/0` | scaled: `0xffff` | `#ff0000` |
+| `rgb:ffff/0/0` | `0xffff` | `#ff0000` |
+| `rgb:1a1a/2b2b/3c3c` | `0x1a1a` | `#1a2b3c` |
+| `#f00` | left-justified, zero-filled: `0xf000` | `#ef0000` |
+| `#ff0000` | `0xff00` | `#ff0000` |
+
+X11 works in 16 bits per channel and so does every terminal reply, so that is the precision to keep. The 8-bit form everyone actually thinks in is derived on demand — and derived with **rounding**, not truncation, or `0xffff` comes back as 254 and the round trip through 8 bits stops being symmetric.
+
+`rgbi:` — floating-point intensities — and X colour names are both valid XParseColor input and neither is ever sent as a reply. Accepting them would only hide a reply that had actually been misread.
+
+The terminator is the other variable. `ST` is the standards-conforming one and `BEL` is accepted everywhere; terminals differ in which they *send*, so a reader has to accept both. Queries should go out terminated with `ST`, since a `BEL` in an outgoing sequence has been known to make terminals beep.
+'''
+
+security = '''
+This is one of the least dangerous things in this project: the queries change nothing, and a terminal that does not implement them does nothing at all.
+
+The one real hazard is the **reply going unread**. It arrives on standard input, as ordinary bytes, and a program that sends a query and then exits without draining the answer hands `11;rgb:1e1e/1e1e/2e2e` to whatever runs next — usually the user's shell, which prints it as stray text or, worse, interprets it as a command. Every query in `escapade` is drained before returning, including on the paths that concluded early, because the barrier is sent last and is therefore still in flight exactly when a colour was answered promptly.
+
+The second is **raw mode**. The reply has to be read before the user presses Enter, which means turning off canonical input, which means the terminal is left unusable if the program dies without restoring it. That is a general hazard of every query in this project, not a property of this one.
+
+What is *not* much of a hazard is the information itself. A background colour is weak fingerprinting material at best, and any program that can send the query can already read the environment, the terminfo entry and the process tree. The comparison worth drawing is with `escapade clipboard`, where reading is genuinely dangerous and terminals disable it by default for exactly that reason.
+'''
+
+caveats = '''
+**A multiplexer answers for itself.** Unlike the newer protocols, `OSC 4`, `OSC 10` and `OSC 11` are sequences tmux *knows*: it keeps its own idea of the palette and answers from that. So the reply is real, it is just a statement about tmux's palette rather than the terminal you are looking at — which may be a good thing, since tmux may be overriding those colours, but it is not what the query appears to ask. tmux also answers the `CSI c` barrier itself, so inside a multiplexer a *missing* reply licenses no negative verdict either.
+
+**The digit-width trap is the bug to look for first.** If a terminal is being reported as dark when it is light, or a colour comes out nearly black, the reply almost certainly had fewer than four digits per channel and was read as a padded value rather than a scaled one. `escapade color` prints the raw reply next to the normalised value on purpose, so the claim can be checked at a glance and a bug report has the original text in it.
+
+**The luminance verdict is a proxy, and the terminal's own word is not.** Deciding light or dark from the background's relative luminance is excellent and available nearly everywhere, but a terminal can be set to a light theme over a dark translucent background, and then the arithmetic says dark while the user is looking at a light window. Mode 2031 reports the *scheme*, which is the question actually being asked, so it wins where it is available — and the report says which basis it used rather than blending the two.
+
+**`OSC 12` is less universally answered than 10 and 11**, and `OSC 17` / `OSC 19` are rarer still. A terminal that answers the background and ignores the cursor is common and not a malfunction; treat each colour as its own question.
+
+**Support for querying is not implied by support for setting.** Every terminal here honours `OSC 11 ; #1e1e2e ST` to set the background. Answering `OSC 11 ; ? ST` is a separate code path, and the rows below are about the second one.
+
+**Do not send a query where the reply cannot come back.** With standard output redirected the query goes into a file; with standard input redirected the answer has nowhere to arrive. Both directions are needed, and a program that checks only one blocks forever on the other. `escapade color` refuses with exit status 2 rather than waiting.
+
+**Mode 2031 is much narrower than the queries**, and it is new: Contour introduced it and the terminals that have it are a small subset of the terminals that answer colour queries at all. A program that wants to keep up on everything else has to fall back to re-asking on a timer — which works, costs a round trip per tick, and notices a change up to one interval late. `escapade color --watch` does exactly that and prints which mechanism it is using, because the difference is not otherwise visible.
+
+**Some terminals answer several palette entries in one reply**, packing them as `4;1;spec;2;spec`. Asking for one entry at a time and reading only the first pair is the portable way through it.
+'''
+
+# -- the sequences -----------------------------------------------------------
+
+[[sequence]]
+name = "Query the default background"
+purpose = "Ask what colour the terminal draws behind everything else. The single most useful query here, and the one a light/dark decision rests on."
+request = "OSC 11 ; ? ST"
+reply = "OSC 11 ; rgb:1e1e/1e1e/2e2e ST"
+notes = "Replace the `?` with a colour specification to set it instead. That is the same sequence, and it is why the query needed no new number."
+
+[[sequence]]
+name = "Query the default foreground"
+purpose = "The colour text is drawn in. Needed alongside the background for any contrast calculation."
+request = "OSC 10 ; ? ST"
+reply = "OSC 10 ; rgb:cdcd/d6d6/f4f4 ST"
+
+[[sequence]]
+name = "Query the cursor colour"
+purpose = "What the text cursor is drawn in. Answered less consistently than 10 and 11."
+request = "OSC 12 ; ? ST"
+reply = "OSC 12 ; rgb:f5f5/e0e0/dcdc ST"
+
+[[sequence]]
+name = "Query the selection colours"
+purpose = "The background and foreground of selected text, under xterm's older name of `highlight`. 18 sits between them and is the Tektronix cursor, which is not what anyone wants."
+request = "OSC 17 ; ? ST  and  OSC 19 ; ? ST"
+reply = "OSC 17 ; rgb:3a3a/3f3f/5c5c ST"
+notes = "The pair is easy to get backwards: **17 is the background and 19 the foreground**."
+
+[[sequence]]
+name = "Query a palette entry"
+purpose = "One of the 256 indexed colours. The first sixteen are the ANSI colours every theme redefines, which is exactly why asking beats assuming that colour 1 is red."
+request = "OSC 4 ; 1 ; ? ST"
+reply = "OSC 4 ; 1 ; rgb:f3f3/8888/baba ST"
+notes = "The reply repeats the index, which is how several answers in one batch are told apart. Without that, querying entries 1 and 2 together would attribute both replies to the first."
+
+[[sequence]]
+name = "The barrier"
+purpose = "Sent once after the colour queries. Its reply proves the terminal processed everything in front of it, which is what turns a timeout into the conclusion that this terminal does not answer."
+request = "CSI c"
+reply = "CSI ? 62 ; 4 c"
+notes = "Answered by every terminal since the VT100 — and, unhelpfully, by tmux on its own behalf."
+
+[[sequence]]
+verb = "watch"
+name = "Subscribe to colour-scheme changes"
+purpose = "Ask the terminal to report every light/dark switch from now on, unprompted."
+request = "CSI ? 2031 h"
+reply = "CSI ? 997 ; 1 n"
+notes = "A mode is terminal state and outlives the process that set it. Send `CSI ? 2031 l` on every path out, including the failure ones, or the reports are delivered to whatever runs next."
+
+[[sequence]]
+verb = "watch"
+name = "Ask which scheme is current"
+purpose = "The one-shot form of the same question, answered in the same shape. Independent of the subscription — a terminal may answer this without implementing the mode."
+request = "CSI ? 996 n"
+reply = "CSI ? 997 ; 2 n"
+notes = "996 asks and 997 answers. The numbers differ on purpose, so a report cannot be confused with another program's request."
+
+[[sequence]]
+verb = "probe"
+name = "Ask whether the subscription exists"
+purpose = "DECRQM for mode 2031. The only way to tell a subscription from wishful thinking, since setting an unknown mode fails silently."
+request = "CSI ? 2031 $ p"
+reply = "CSI ? 2031 ; 2 $ y"
+notes = "`0` not recognized, `1` set, `2` reset, `3` permanently set, `4` permanently reset. Worthless without a control query for an impossible mode number, because iTerm2 answers `4` for modes that do not exist."
+
+# -- the parameters ----------------------------------------------------------
+
+[[param]]
+key = "?"
+applies_to = "every query"
+default = "none — a colour specification here sets instead of asks"
+description = "The whole mechanism. `OSC 11 ; #1e1e2e ST` sets the background; `OSC 11 ; ? ST` reports it."
+
+[[param]]
+key = "<index>"
+applies_to = "OSC 4"
+default = "none — required"
+description = "Which palette entry, 0 to 255. Repeated in the reply so that batched answers can be matched to their questions."
+
+[[param]]
+key = "rgb:<r>/<g>/<b>"
+applies_to = "the reply"
+default = "none"
+description = "One to four hex digits per channel, **scaled** so that the digits given are the most significant ones. `rgb:f/0/0` is full red."
+
+[[param]]
+key = "#RGB"
+applies_to = "the reply, older terminals"
+default = "none"
+description = "Left-justified and **zero-filled**, unlike `rgb:`. `#f00` is `#ef0000`, not `#ff0000`."
+
+[[param]]
+key = "ST or BEL"
+applies_to = "every sequence"
+default = "ST"
+description = "Both terminate an OSC string and both are accepted. Send `ST`; accept either, since terminals differ in what they reply with."
+
+[[param]]
+key = "Ps"
+applies_to = "CSI ? 997 ; Ps n"
+default = "none"
+description = "The reported scheme: **1 dark, 2 light**. Any other value is a protocol this code does not know, and is better reported as unknown than folded into one of the two."
+
+# -- who uses it -------------------------------------------------------------
+
+[[user]]
+name = "Neovim"
+kind = "editor"
+url = "https://neovim.io/doc/user/options.html"
+notes = "Queries `OSC 11` at startup to set `'background'`, which is what makes a colourscheme pick its light or dark variant without the user configuring anything. The most widely felt use of this feature: it is why opening Neovim in a light terminal no longer produces unreadable comments."
+
+[[user]]
+name = "Vim"
+kind = "editor"
+url = "https://vimhelp.org/options.txt.html"
+notes = "The same `OSC 11` background detection, arrived at after years of `COLORFGBG` guessing and terminfo heuristics."
+
+[[user]]
+name = "tmux"
+kind = "multiplexer"
+url = "https://github.com/tmux/tmux"
+notes = "Both a consumer and an implementer: it queries the terminal underneath for its palette, and answers queries from programs inside it out of its own. That double role is why a reply from inside tmux describes tmux."
+
+[[user]]
+name = "termbg"
+kind = "library"
+url = "https://crates.io/crates/termbg"
+notes = "A Rust crate whose entire purpose is this query plus the light/dark decision — the clearest sign that the problem is common enough to be worth a dependency."
+
+# -- support -----------------------------------------------------------------
+
+[[support]]
+terminal = "xterm"
+status = "yes"
+since = "1997"
+notes = "The origin. The dynamic-colour sequences and the `?` query are both xterm's, and `ctlseqs` remains the specification everyone else implements against. No mode 2031."
+source = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+notes = "Answers the dynamic-colour and palette queries, and implements **mode 2031** for colour-scheme change notification. Also has `OSC 21`, its own extension for querying and setting several colours in one round trip."
+source = "https://sw.kovidgoyal.net/kitty/color-stack/"
+
+[[support]]
+terminal = "contour"
+status = "yes"
+notes = "**Where mode 2031 comes from.** Contour specified `CSI ? 2031 h`, the `CSI ? 996 n` request and the `CSI ? 997 ; Ps n` report, and documents them alongside the ordinary colour queries."
+source = "https://contour-terminal.org/vt-extensions/color-palette-update-notifications/"
+
+[[support]]
+terminal = "ghostty"
+status = "yes"
+notes = "Answers the dynamic-colour and palette queries and implements **mode 2031**, documented in its VT reference under DEC private modes."
+source = "https://ghostty.org/docs/vt"
+
+[[support]]
+terminal = "foot"
+status = "yes"
+notes = "Answers `OSC 4/10/11/12` queries, and implements **mode 2031**."
+source = "https://codeberg.org/dnkl/foot/src/branch/master/doc/foot-ctlseqs.7.scd"
+
+[[support]]
+terminal = "wezterm"
+status = "yes"
+notes = "Answers the dynamic-colour and palette queries; its escape-sequence reference documents both the set and the query forms."
+source = "https://wezterm.org/escape-sequences.html"
+
+[[support]]
+terminal = "alacritty"
+status = "yes"
+notes = "Answers `OSC 4/10/11/12` queries. No mode 2031, consistent with Alacritty declining features it considers outside a terminal emulator's job."
+source = "https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/mod.rs"
+
+[[support]]
+terminal = "iterm2"
+status = "yes"
+notes = "Answers the dynamic-colour and palette queries. Worth knowing when probing it: iTerm2 answers **DECRQM for modes that do not exist** with `4`, so a mode 2031 query needs a control query to be worth anything."
+source = "https://iterm2.com/documentation-escape-codes.html"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "yes"
+notes = "Through VTE, which answers `OSC 10` and `OSC 11` queries. Palette queries and mode 2031 have not been verified here."
+source = "https://gitlab.gnome.org/GNOME/vte"
+
+[[support]]
+terminal = "konsole"
+status = "yes"
+notes = "Answers colour queries, and is one of the terminals that also sets `COLORFGBG` — which is how the environment variable got its reputation for being both present and unreliable."
+source = "https://invent.kde.org/utilities/konsole"
+
+[[support]]
+terminal = "rio"
+status = "unknown"
+notes = "Rio inherits much of Alacritty's VT handling, which would imply the queries work, but this has not been checked against the source."
+
+[[support]]
+terminal = "mintty"
+status = "unknown"
+notes = "Not checked."
+
+[[support]]
+terminal = "windows-terminal"
+status = "unknown"
+notes = "Setting colours via `OSC 4/10/11` is supported. Whether the `?` **query** form is answered has not been verified here, and it is the part that matters."
+
+[[support]]
+terminal = "vscode"
+status = "unknown"
+notes = "Depends on xterm.js, and has not been checked."
+
+[[support]]
+terminal = "st"
+status = "unknown"
+notes = "Not checked."
+
+[[support]]
+terminal = "conemu"
+status = "unknown"
+notes = "Not checked."
+
+[[support]]
+terminal = "warp"
+status = "unknown"
+notes = "Not checked."
+
+[[support]]
+terminal = "wayst"
+status = "unknown"
+notes = "Not checked."
+
+[[support]]
+terminal = "tmux"
+status = "partial"
+notes = "**Answers from its own palette rather than passing the query through.** The reply is real and arrives promptly; it just describes tmux, which may be overriding the terminal's colours anyway. tmux also answers the `CSI c` barrier itself, so inside it a missing reply proves nothing about the terminal beyond."
+source = "https://github.com/tmux/tmux"
+
+[[support]]
+terminal = "screen"
+status = "unknown"
+notes = "Not checked."
+
+[[support]]
+terminal = "zellij"
+status = "unknown"
+notes = "Not checked."
+
+# -- further reading ---------------------------------------------------------
+
+[[resource]]
+title = "xterm control sequences — Operating System Commands"
+url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[resource]]
+title = "XParseColor(3) — the reply format, and why rgb: scales while # does not"
+url = "https://www.x.org/releases/current/doc/man/man3/XParseColor.3.xhtml"
+
+[[resource]]
+title = "Contour: colour palette update notifications (mode 2031)"
+url = "https://contour-terminal.org/vt-extensions/color-palette-update-notifications/"
+
+[[resource]]
+title = "kitty: the colour stack and OSC 21"
+url = "https://sw.kovidgoyal.net/kitty/color-stack/"
+
+[[resource]]
+title = "WCAG 2 relative luminance and contrast ratio"
+url = "https://www.w3.org/TR/WCAG22/#dfn-relative-luminance"

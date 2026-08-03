@@ -30,10 +30,12 @@
 
 use std::fmt::Write as _;
 
-use crate::features::doctor::{
-    Diagnosis, Row,
-    modes::{self, Trust},
-    verdict::{Agreement, Origin, Reading},
+use crate::{
+    decrqm::{self, Trust},
+    features::doctor::{
+        Diagnosis, Row,
+        verdict::{Agreement, Origin, Reading},
+    },
 };
 
 /// Prints the whole diagnosis as JSON Lines.
@@ -88,7 +90,7 @@ pub fn run_record(diagnosis: &Diagnosis<'_>) -> String {
 
     // The sentinel: the control that decides whether any DECRQM answer counts.
     out.push_str(",\"decrqm_sentinel\":{\"mode\":");
-    let _ = write!(out, "{}", modes::SENTINEL_MODE);
+    let _ = write!(out, "{}", decrqm::SENTINEL_MODE);
     match diagnosis.sentinel.trust() {
         Trust::Trusted => out.push_str(",\"answered\":false,\"trust\":\"trusted\""),
         Trust::Unknown => out.push_str(",\"answered\":false,\"trust\":\"unknown\""),
@@ -283,14 +285,16 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::features::{
-        Support,
-        doctor::{
-            checks::Catalogue,
-            modes::{ModeState, Sentinel},
-            session::{Channel, NoChannel},
-            terminfo,
-            verdict::{Claim, agreement},
+    use crate::{
+        decrqm::{ModeState, Sentinel},
+        features::{
+            Support,
+            doctor::{
+                checks::Catalogue,
+                session::{Channel, NoChannel},
+                terminfo,
+                verdict::{Claim, agreement},
+            },
         },
     };
 

@@ -7,10 +7,10 @@
 //! that are fine.
 
 use crate::{
+    decrqm::{self, Trust},
     features::doctor::{
         Diagnosis, Row,
         checks::Catalogue,
-        modes::{self, Trust},
         verdict::{Agreement, Claim, Origin},
     },
     theme::{Ink, Theme},
@@ -193,7 +193,7 @@ fn warnings(theme: &Theme, diagnosis: &Diagnosis<'_>) {
         let control = format!(
             "DECRQM control: the terminal ignored mode {}, which does not exist, so its mode \
              answers mean what they say",
-            modes::SENTINEL_MODE
+            decrqm::SENTINEL_MODE
         );
         let mut lines = crate::features::wrap(&control, theme.width().saturating_sub(4)).into_iter();
         if let Some(first) = lines.next() {
@@ -452,11 +452,11 @@ mod tests {
 
     use super::*;
     use crate::{
+        decrqm::{ModeState, Sentinel},
         features::{
             Support,
             doctor::{
                 Row,
-                modes::{ModeState, Sentinel},
                 session::{Channel, NoChannel},
                 terminfo,
                 verdict::{Reading, agreement},

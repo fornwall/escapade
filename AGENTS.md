@@ -13,9 +13,9 @@ transient server errors; most were resumed and finished, some were not.
 
 | check | result |
 | --- | --- |
-| `cargo test` | **1,450 passing, 0 failing** |
+| `cargo test` | **1,616 passing, 0 failing** |
 | `cargo check` | clean |
-| `cargo clippy --all-targets` | 2 warnings remaining |
+| `cargo clippy --all-targets` | **clean** |
 
 ## Complete
 
@@ -35,6 +35,8 @@ count; a placeholder is 11 lines, so these are all real.
 | `dimensions` | 58 | 350 | Size in cells and pixels, with `probe --rows-at-least`-style thresholds. **Its agent never reported** — killed by the session limit — so completeness is inferred from the tests and data file. |
 | `hyperlink` | 56 | 476 | OSC 8. Percent-encodes URIs but *rejects* malformed `id`s, since an id's only job is to compare byte-equal against ids from other programs. Visible text gets Control Pictures stand-ins. |
 | `unscroll` | 31 | 296 | `CSI Ps + T`. **Disproved this project's own `TODO.md`** about the pager use case — see Corrections there. Found a third implementation (contour) that kitty's own page does not list. |
+| `clipboard` | 48 | 407 | OSC 52. The **only probe here whose measurement is free**: the clipboard extension puts `52` in the device-attributes reply, so the barrier every probe already sends carries the answer — and a conforming terminal must withdraw it when the user disables clipboard access, so it describes the session rather than a version. Reading is deliberately never probed: on Konsole the query *destroys* the clipboard, which `paste` refuses without `--force`. First module to reuse `doctor/identity.rs` instead of copying its table. |
+| `color` | 116 | 391 | OSC 4/10/11/12/17/19 and DEC mode 2031. The ~2,800 lines that were unreachable behind a `bail!` are now wired, plus the three modules that were missing: `notify` (the subscription), `probe` and `demo`. The **only probe here that measures rather than infers** — a colour query has a reply, so no support table is consulted. Compiling `report.rs` for the first time turned up a test that had never run and was wrong: pure red is *light*, at luminance 0.2126 against an L\* = 50 threshold of 0.1842. |
 
 ## Implementation done, data file still a placeholder
 
@@ -48,10 +50,8 @@ written.
 
 ## Not finished
 
-| feature | state |
-| --- | --- |
-| `color` | ~2,800 lines across 5 files, but **`mod.rs` is still the placeholder that `bail!`s**, so `escapade color` does not run and none of that code is reachable. Data file is a placeholder. Its agent was verifying support rows for tmux, Alacritty, foot and Windows Terminal when it was killed. Wiring `mod.rs` is likely a short job with a large payoff — the same situation `style` was in before it was resumed. |
-| `clipboard` | **Not started.** 21-line stub only; its agent was killed before writing anything. OSC 52 was independently identified as the most reimplemented escape sequence in the field and this project's most conspicuous gap, so it is the highest-value remaining work. |
+Nothing. Every subcommand in `--help` now does something; `clipboard`, the last
+`bail!("not implemented yet")`, is in the table above.
 
 ## Dropped
 
@@ -63,15 +63,28 @@ cost real source-reading.
 
 ## What to do next, in order
 
-1. **Wire `color`'s `mod.rs`.** One file stands between ~2,800 lines of finished
-   work and a working command.
-2. **Write the `keys` and `textsize` data files.** Both features work; both
-   `explain` pages are empty.
-3. **Implement `clipboard`.** The largest genuine gap.
-4. Clear the last 2 clippy warnings.
-5. `TODO.md`'s "Known issues" — starting with the fact that **nothing is committed
-   to git**, so none of this is recoverable if an edit goes wrong. This has already
-   cost one retyped block of `cli.rs` and one silently reverted CLI fix.
+1. **Write the `keys` and `textsize` data files.** Both features work; both
+   `explain` pages are empty. This is now the only unfinished work of its kind.
+2. **Settle the five `unknown` rows in `clipboard`'s matrix** — VS Code, GNU
+   Screen, ConEmu, Warp and wayst. Each says "not checked" rather than guessing;
+   GNU Screen's source could not be reached at all while the file was written.
+3. **Verify `color`'s support matrix.** Ten rows are `unknown` and say so, and
+   two `yes` rows (VTE, Konsole) cite a repository rather than a specific file.
+   Checking those against source is exactly the contribution `CONTRIBUTING.md`
+   asks for and needs no Rust.
+4. `TODO.md`'s "Known issues" — the top one is now that `escapade color`'s
+   one-shot report never asks for the colour scheme, so `--is-dark` decides from
+   luminance even where the terminal would have answered outright.
+
+## Shared code
+
+`src/decrqm.rs` (18 tests) is the DECRQM protocol — the five DECRPM states, the
+impossible-mode sentinel that iTerm2 fails, and the report parser. It replaces
+two near-identical copies that had been carried in `doctor` and `grapheme` and
+had already drifted: one parsed DECRPM values as `u16`, so a terminal answering
+anything larger produced no report at all rather than an undefined one. Each
+feature keeps its own *interpretation* — what a reset mode 2027 means to a
+program measuring text is `grapheme`'s business, not the protocol's.
 
 ## A note on what these agents were good at
 
@@ -79,7 +92,10 @@ The most valuable thing they produced was not code but **corrections**. Three
 separate agents disproved something this project had written down: that the DECRQSS
 success flag can be trusted (it cannot — DEC's own manuals had it reversed), that
 `unscroll` fixes the pager case (it does not), and that xterm resources gate the
-screen dumps (no resource does). Two also caught real bugs in the shared code —
+screen dumps (no resource does). A fourth disproved something *tmux's own manual
+page* implies — that `set-clipboard external` forwards an application's OSC 52. It
+does not: `input_osc_52_parse` returns immediately unless the option is `on`, so
+under the default nothing an application sends is looked at at all. Two also caught real bugs in the shared code —
 `explain.rs` advertising a `demo` verb for features that have none, and `main.rs`
 silently dropping `--no-color`.
 

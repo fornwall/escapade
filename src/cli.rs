@@ -446,10 +446,24 @@ Examples:
     },
 
     /// Read the clipboard back, if the terminal permits it
+    #[command(after_help = "\
+Most terminals refuse this, and that is the point: a program that can read your
+clipboard can read the password you copied a moment ago. kitty and Ghostty ask
+you first, Alacritty and WezTerm ignore the query, and Konsole overwrites the
+clipboard instead of answering — which is why this refuses to run there without
+--force. See `explain`.
+
+Examples:
+  escapade clipboard paste
+  escapade clipboard paste --selection primary > saved.txt")]
     Paste {
         /// Which selection to read
         #[arg(long, short, value_enum, default_value_t = ClipboardSelection::Clipboard)]
         selection: ClipboardSelection,
+
+        /// Ask even on a terminal where the query is known to be destructive
+        #[arg(long)]
+        force: bool,
     },
 
     /// Explain the sequence, its size limits, and why reading is usually refused
@@ -491,7 +505,7 @@ pub enum ClipboardSelection {
     Clipboard,
     /// The X primary selection, pasted with the middle mouse button
     Primary,
-    /// The cut buffer
+    /// xterm's configurable selection, whichever of the two it points at
     Select,
 }
 

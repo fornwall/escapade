@@ -232,6 +232,12 @@ impl Answer {
 }
 
 /// Everything one round trip established.
+#[expect(
+    clippy::struct_field_names,
+    reason = "`answers.answers` reads oddly, but the struct is the whole result \
+              of a round trip and the field is the per-target answers within it; \
+              every alternative name describes the list less well"
+)]
 #[derive(Debug, Clone, Default)]
 pub struct Answers {
     /// One entry per target, in the order they were asked about.
@@ -436,11 +442,9 @@ fn drain_barrier(input: &mut InputReader, outcome: &mut Answers) {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests are allowed to unwrap; clippy.toml sets allow-unwrap-in-tests"
-)]
+// clippy.toml sets allow-unwrap-in-tests; the attribute covers the helpers in
+// here that are not themselves `#[test]` functions.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::term::pretty;

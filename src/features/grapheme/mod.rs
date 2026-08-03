@@ -57,6 +57,7 @@ use anyhow::Result;
 use crate::{
     cli::{FeatureCommand, GraphemeAction},
     db::Catalog,
+    decrqm::{self, ModeState, SENTINEL_MODE},
     input::Reply,
     term::CSI,
     theme::Theme,
@@ -68,31 +69,8 @@ pub const FEATURE_ID: &str = "grapheme-clustering";
 /// The DEC private mode number the Terminal Unicode Core specification claims.
 pub const MODE: u32 = 2027;
 
-/// A mode number no terminal can possibly implement, queried as a **control**.
-///
-/// Some terminals answer DECRQM with a confident state for modes they have never
-/// heard of. iTerm2 answers `4` (permanently reset) for anything it does not
-/// recognise, fictional numbers included — so on iTerm2 a `4` for mode 2027 does
-/// not mean "knows grapheme clustering, firmly disabled". It means nothing at all,
-/// and reporting it as a state is worse than reporting nothing, because a reader
-/// cannot tell it from a genuine permanent reset.
-///
-/// Querying this number alongside the real one turns that into something
-/// detectable: whatever a terminal says about a mode that cannot exist is what its
-/// answers are worth. See [`Reliability`].
-pub const SENTINEL_MODE: u32 = 9_876_543;
-
-// Enforced at compile time, because the control is worthless if it could ever
-// name a mode that exists, and `u16` would silently truncate it in a reply.
-const _: () = assert!(
-    SENTINEL_MODE > 1_000_000,
-    "must be far outside real mode numbers"
-);
+// The control query is worthless if it could ever name a mode that exists.
 const _: () = assert!(SENTINEL_MODE != MODE);
-const _: () = assert!(
-    SENTINEL_MODE > u16::MAX as u32,
-    "the report parser must not use u16"
-);
 
 /// A sequence whose cell count differs between `wcwidth` and UAX #29, used
 /// whenever something needs a sequence to measure and the user did not name one.
@@ -128,7 +106,7 @@ pub fn set(enabled: bool) -> String {
 /// all" have to stay separate verdicts.
 #[must_use]
 pub fn query() -> String {
-    format!("{CSI}?{MODE}$p")
+    decrqm::query(MODE)
 }
 
 /// Asks about [`SENTINEL_MODE`]: `CSI ? 9876543 $ p`.
@@ -138,7 +116,7 @@ pub fn query() -> String {
 /// measure of what its other answers are worth.
 #[must_use]
 pub fn sentinel_query() -> String {
-    format!("{CSI}?{SENTINEL_MODE}$p")
+    decrqm::query(SENTINEL_MODE)
 }
 
 /// Primary Device Attributes: `CSI c`.
@@ -163,133 +141,51 @@ pub fn position_query() -> String {
 
 // -- the DECRPM answer ------------------------------------------------------
 
-/// What DECRPM reported about a mode.
+/// What a DECRPM state means for a program that has to measure text.
 ///
-/// The numbers are DEC's, as documented for DECRPM in xterm's control-sequence
-/// reference: `0` not recognized, `1` set, `2` reset, `3` permanently set,
-/// `4` permanently reset. The Terminal Unicode Core specification does not
-/// restate them; it says DECRQM's reply "will indicate each state accurately
-/// enough not to need any new VT sequence introduced" and leaves the encoding to
-/// DECRQM.
+/// The five values are DEC's and are decoded by [`crate::decrqm`], which is
+/// shared with every other feature that asks a mode about itself. What is
+/// specific to mode 2027 is what each state means *here*, which is this:
 ///
-/// All five matter here, and so does their absence:
-///
-/// * `1`/`2` — the terminal implements the mode and it can be switched.
+/// * `1`/`2` — the terminal implements clustering and it can be switched.
 /// * `3` — clustering is always on. Ghostty behaves this way when its
 ///   `grapheme-width-method` is already `unicode`; foot reports permanently
 ///   *reset* when its width method is not `double-width`.
 /// * `0` — the terminal parses DECRQM but has never heard of mode 2027.
 /// * no reply — the terminal does not implement DECRQM at all, or something in
 ///   between swallowed it. Not the same as `0`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModeState {
-    /// `0` — DECRQM understood, mode 2027 unknown.
-    NotRecognized,
-    /// `1` — implemented and currently on.
-    Set,
-    /// `2` — implemented and currently off.
-    Reset,
-    /// `3` — always on; `CSI ? 2027 l` will not turn it off.
-    PermanentlySet,
-    /// `4` — always off; `CSI ? 2027 h` will not turn it on.
-    PermanentlyReset,
-    /// A value DECRPM does not define. Kept rather than folded into one of the
-    /// others, because guessing is how a probe starts lying.
-    Undefined(u16),
-}
-
-impl ModeState {
-    /// Decodes a DECRPM value.
-    #[must_use]
-    pub fn from_value(value: u16) -> Self {
-        match value {
-            0 => Self::NotRecognized,
-            1 => Self::Set,
-            2 => Self::Reset,
-            3 => Self::PermanentlySet,
-            4 => Self::PermanentlyReset,
-            other => Self::Undefined(other),
+///
+/// The Terminal Unicode Core specification does not restate the encoding; it says
+/// DECRQM's reply "will indicate each state accurately enough not to need any new
+/// VT sequence introduced" and leaves it to DECRQM.
+#[must_use]
+pub fn explanation(state: ModeState) -> &'static str {
+    match state {
+        ModeState::NotRecognized => {
+            "The terminal parses DECRQM but does not know mode 2027, so it counts cells with \
+             wcwidth and will not be talked out of it."
         }
-    }
-
-    /// The DECRPM value this state is spelled with.
-    #[must_use]
-    pub fn value(self) -> u16 {
-        match self {
-            Self::NotRecognized => 0,
-            Self::Set => 1,
-            Self::Reset => 2,
-            Self::PermanentlySet => 3,
-            Self::PermanentlyReset => 4,
-            Self::Undefined(other) => other,
+        ModeState::Set => {
+            "Grapheme clustering is on right now — either the terminal defaults to it or \
+             something in this session switched it on."
         }
-    }
-
-    /// Short human label.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::NotRecognized => "not recognised",
-            Self::Set => "set",
-            Self::Reset => "reset",
-            Self::PermanentlySet => "permanently set",
-            Self::PermanentlyReset => "permanently reset",
-            Self::Undefined(_) => "undefined DECRPM value",
+        ModeState::Reset => {
+            "The terminal implements mode 2027 but has it off. Send `CSI ? 2027 h` to turn it \
+             on, and put it back when you are done."
         }
-    }
-
-    /// One sentence a reader can act on.
-    #[must_use]
-    pub fn explanation(self) -> &'static str {
-        match self {
-            Self::NotRecognized => {
-                "The terminal parses DECRQM but does not know mode 2027, so it counts cells with \
-                 wcwidth and will not be talked out of it."
-            }
-            Self::Set => {
-                "Grapheme clustering is on right now — either the terminal defaults to it or \
-                 something in this session switched it on."
-            }
-            Self::Reset => {
-                "The terminal implements mode 2027 but has it off. Send `CSI ? 2027 h` to turn it \
-                 on, and put it back when you are done."
-            }
-            Self::PermanentlySet => {
-                "Clustering is always on and cannot be switched off. Nothing to enable — just \
-                 measure widths per cluster."
-            }
-            Self::PermanentlyReset => {
-                "The terminal knows the mode and refuses it, usually because it is configured for \
-                 a width method that cannot honour it. Enabling it will not work; count widths the \
-                 way the terminal does instead."
-            }
-            Self::Undefined(_) => {
-                "DECRPM answered with a value it does not define. Treat the mode as unavailable \
-                 and measure rather than trust."
-            }
+        ModeState::PermanentlySet => {
+            "Clustering is always on and cannot be switched off. Nothing to enable — just \
+             measure widths per cluster."
         }
-    }
-
-    /// Whether clustering is on right now.
-    #[must_use]
-    pub fn enabled(self) -> bool {
-        matches!(self, Self::Set | Self::PermanentlySet)
-    }
-
-    /// Whether the terminal knows what mode 2027 is.
-    ///
-    /// `4` counts: a terminal that says "permanently reset" has recognised the
-    /// mode and told us it will never honour it, which is far more useful than
-    /// silence.
-    #[must_use]
-    pub fn recognized(self) -> bool {
-        !matches!(self, Self::NotRecognized | Self::Undefined(_))
-    }
-
-    /// Whether `CSI ? 2027 h` / `l` will actually change anything.
-    #[must_use]
-    pub fn settable(self) -> bool {
-        matches!(self, Self::Set | Self::Reset)
+        ModeState::PermanentlyReset => {
+            "The terminal knows the mode and refuses it, usually because it is configured for \
+             a width method that cannot honour it. Enabling it will not work; count widths the \
+             way the terminal does instead."
+        }
+        ModeState::Undefined(_) => {
+            "DECRPM answered with a value it does not define. Treat the mode as unavailable \
+             and measure rather than trust."
+        }
     }
 }
 
@@ -398,55 +294,21 @@ pub fn reliability(
     }
 }
 
-/// Parses a DECRPM report — `CSI ? 2027 ; 1 $ y` — from a `CSI`-shaped reply.
-///
-/// `params` is the raw parameter text with the private prefix kept and
-/// intermediates dropped, exactly as [`Reply::Csi`] delivers it, so a report for
-/// mode 2027 arrives as `("?2027;1", 'y')`.
-///
-/// Returns the mode number alongside its state, because a report about some other
-/// mode arrives on the same stream and must not be mistaken for ours — the
-/// sentinel control depends on telling the two apart. `None` for anything that is
-/// not a DEC private mode report.
-///
-/// The mode number is `u32`: [`SENTINEL_MODE`] is deliberately far outside the
-/// range real modes occupy, and would not survive a `u16`.
-#[must_use]
-pub fn parse_mode_report(params: &str, final_byte: char) -> Option<(u32, ModeState)> {
-    if final_byte != 'y' {
-        return None;
-    }
-    // The `?` is not decoration: without it this is a report about an *ANSI*
-    // mode, which is a different number space entirely.
-    let body = params.strip_prefix('?')?;
-    let (mode, value) = body.split_once(';')?;
-    let mode = mode.trim().parse::<u32>().ok()?;
-    let value = value.trim().parse::<u16>().ok()?;
-    Some((mode, ModeState::from_value(value)))
-}
-
-/// Picks the state for `wanted` out of a reply, ignoring reports about other modes.
-#[must_use]
-pub fn mode_state_for(reply: &Reply, wanted: u32) -> Option<ModeState> {
-    let Reply::Csi { params, final_byte } = reply else {
-        return None;
-    };
-    match parse_mode_report(params, *final_byte) {
-        Some((mode, state)) if mode == wanted => Some(state),
-        _ => None,
-    }
-}
-
 /// Picks mode 2027's state out of a reply.
+///
+/// The reports for the real mode and for [`SENTINEL_MODE`] arrive on the same
+/// stream and in either order, so they can only be told apart by the number they
+/// carry — which is why [`crate::decrqm::state_for`] matches on it rather than on
+/// arrival position.
 #[must_use]
 pub fn mode_state_from_reply(reply: &Reply) -> Option<ModeState> {
-    mode_state_for(reply, MODE)
+    decrqm::state_for(reply, MODE)
 }
 
 /// Picks the [`SENTINEL_MODE`] control's state out of a reply.
 #[must_use]
 pub fn sentinel_state_from_reply(reply: &Reply) -> Option<ModeState> {
-    mode_state_for(reply, SENTINEL_MODE)
+    decrqm::state_for(reply, SENTINEL_MODE)
 }
 
 /// What to send to put the mode back the way it was found, if anything.
@@ -609,118 +471,30 @@ mod tests {
     }
 
     #[test]
-    fn decrpm_values_use_the_dec_numbering() {
-        // 0 not recognized, 1 set, 2 reset, 3 permanently set, 4 permanently
-        // reset — per xterm's DECRPM documentation. Getting 1 and 2 the wrong
-        // way round would invert every verdict this subcommand prints.
-        assert_eq!(ModeState::from_value(0), ModeState::NotRecognized);
-        assert_eq!(ModeState::from_value(1), ModeState::Set);
-        assert_eq!(ModeState::from_value(2), ModeState::Reset);
-        assert_eq!(ModeState::from_value(3), ModeState::PermanentlySet);
-        assert_eq!(ModeState::from_value(4), ModeState::PermanentlyReset);
-        assert_eq!(ModeState::from_value(7), ModeState::Undefined(7));
-    }
-
-    #[test]
-    fn every_state_round_trips_through_its_value() {
-        for value in 0..=8 {
-            assert_eq!(ModeState::from_value(value).value(), value);
-        }
-    }
-
-    #[test]
-    fn only_set_and_permanently_set_mean_clustering_is_on() {
-        assert!(ModeState::Set.enabled());
-        assert!(ModeState::PermanentlySet.enabled());
-        assert!(!ModeState::Reset.enabled());
-        assert!(!ModeState::PermanentlyReset.enabled());
-        assert!(!ModeState::NotRecognized.enabled());
-        assert!(!ModeState::Undefined(9).enabled());
-    }
-
-    #[test]
-    fn permanently_reset_still_counts_as_recognised() {
-        // "I know this mode and will never honour it" is information; "0" is not.
-        assert!(ModeState::PermanentlyReset.recognized());
-        assert!(ModeState::PermanentlySet.recognized());
-        assert!(ModeState::Set.recognized());
-        assert!(ModeState::Reset.recognized());
-        assert!(!ModeState::NotRecognized.recognized());
-        assert!(!ModeState::Undefined(5).recognized());
-    }
-
-    #[test]
-    fn only_the_switchable_states_are_settable() {
-        assert!(ModeState::Set.settable());
-        assert!(ModeState::Reset.settable());
-        assert!(!ModeState::PermanentlySet.settable());
-        assert!(!ModeState::PermanentlyReset.settable());
-        assert!(!ModeState::NotRecognized.settable());
-    }
-
-    #[test]
-    fn every_state_has_a_distinct_label_and_explanation() {
+    fn every_state_explains_itself_in_terms_of_mode_2027() {
+        // The decoding is `crate::decrqm`'s and is tested there. What belongs to
+        // this feature is that each state says something different about what a
+        // program measuring text should do next.
         let states = [
             ModeState::NotRecognized,
             ModeState::Set,
             ModeState::Reset,
             ModeState::PermanentlySet,
             ModeState::PermanentlyReset,
+            ModeState::Undefined(9),
         ];
-        for field in [
-            states.map(ModeState::label),
-            states.map(ModeState::explanation),
-        ] {
-            let mut seen = field.to_vec();
-            seen.sort_unstable();
-            let total = seen.len();
-            seen.dedup();
-            assert_eq!(seen.len(), total, "two states share a description");
-        }
+        let mut seen: Vec<&str> = states.iter().copied().map(explanation).collect();
+        assert!(seen.iter().all(|text| !text.is_empty()));
+        seen.sort_unstable();
+        let total = seen.len();
+        seen.dedup();
+        assert_eq!(seen.len(), total, "two states share a description");
     }
 
     #[test]
-    fn parses_the_decrpm_report_for_every_value() {
-        for (value, expected) in [
-            (0, ModeState::NotRecognized),
-            (1, ModeState::Set),
-            (2, ModeState::Reset),
-            (3, ModeState::PermanentlySet),
-            (4, ModeState::PermanentlyReset),
-        ] {
-            let params = format!("?2027;{value}");
-            assert_eq!(
-                parse_mode_report(&params, 'y'),
-                Some((2027, expected)),
-                "{params}"
-            );
-        }
-    }
-
-    #[test]
-    fn ignores_replies_that_are_not_dec_private_mode_reports() {
-        // Primary Device Attributes — the barrier, which arrives on the same
-        // stream and must never be read as a mode report.
-        assert_eq!(parse_mode_report("?62;4", 'c'), None);
-        // Cursor Position Report.
-        assert_eq!(parse_mode_report("14;1", 'R'), None);
-        // A report about an ANSI mode, not a DEC private one.
-        assert_eq!(parse_mode_report("2027;1", 'y'), None);
-        // Truncated and malformed.
-        assert_eq!(parse_mode_report("?2027", 'y'), None);
-        assert_eq!(parse_mode_report("?;1", 'y'), None);
-        assert_eq!(parse_mode_report("?2027;x", 'y'), None);
-        assert_eq!(parse_mode_report("", 'y'), None);
-    }
-
-    #[test]
-    fn a_report_about_another_mode_keeps_its_number() {
+    fn a_report_about_another_mode_is_not_ours() {
         // Synchronized output is mode 2026 — one digit away, and a completely
         // different feature.
-        assert_eq!(
-            parse_mode_report("?2026;1", 'y'),
-            Some((2026, ModeState::Set))
-        );
         let reply = Reply::Csi {
             params: "?2026;1".to_owned(),
             final_byte: 'y',
@@ -884,9 +658,13 @@ mod tests {
         // The sentinel does not fit in a `u16`, so the report parser must not use
         // one — otherwise the control's own answer would be silently dropped and
         // every run would look `NoDecrqm`.
+        let control = Reply::Csi {
+            params: format!("?{SENTINEL_MODE};4"),
+            final_byte: 'y',
+        };
         assert_eq!(
-            parse_mode_report(&format!("?{SENTINEL_MODE};4"), 'y'),
-            Some((SENTINEL_MODE, ModeState::PermanentlyReset))
+            sentinel_state_from_reply(&control),
+            Some(ModeState::PermanentlyReset)
         );
     }
 

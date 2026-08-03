@@ -326,25 +326,22 @@ fn summary(theme: &Theme, answers: &Answers, verdict: Option<Verdict>) {
     }
 
     println!();
-    match verdict {
-        Some(verdict) => {
-            let ink = if verdict.dark { Ink::Accent } else { Ink::Warn };
-            println!(
-                "  {} {}   {}",
-                theme.paint("scheme", Ink::Strong),
-                theme.paint(verdict.label(), ink),
-                theme.paint(&format!("({})", verdict.basis.describe()), Ink::Muted)
-            );
-        }
-        None => {
-            println!(
-                "  {} {}",
-                theme.paint("scheme", Ink::Strong),
-                theme.paint("unknown — the terminal would not say", Ink::Warn)
-            );
-            for line in wrap(unanswered_reason(answers), theme.width().saturating_sub(4)) {
-                println!("    {}", theme.paint(&line, Ink::Muted));
-            }
+    if let Some(verdict) = verdict {
+        let ink = if verdict.dark { Ink::Accent } else { Ink::Warn };
+        println!(
+            "  {} {}   {}",
+            theme.paint("scheme", Ink::Strong),
+            theme.paint(verdict.label(), ink),
+            theme.paint(&format!("({})", verdict.basis.describe()), Ink::Muted)
+        );
+    } else {
+        println!(
+            "  {} {}",
+            theme.paint("scheme", Ink::Strong),
+            theme.paint("unknown — the terminal would not say", Ink::Warn)
+        );
+        for line in wrap(unanswered_reason(answers), theme.width().saturating_sub(4)) {
+            println!("    {}", theme.paint(&line, Ink::Muted));
         }
     }
 
@@ -500,11 +497,9 @@ pub(super) fn escape_json(text: &str) -> String {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests are allowed to unwrap; clippy.toml sets allow-unwrap-in-tests"
-)]
+// clippy.toml sets allow-unwrap-in-tests; the attribute covers the helpers in
+// here that are not themselves `#[test]` functions.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::features::color::value::parse_reply;
@@ -629,7 +624,16 @@ mod tests {
         assert!(line.contains("\"hex\":\"#ff0000\""), "{line}");
         assert!(line.contains("\"rgb8\":[255,0,0]"), "{line}");
         assert!(line.contains("\"rgb16\":[65535,0,0]"), "{line}");
-        assert!(line.contains("\"dark\":true"), "pure red is dark: {line}");
+        // Pure red lands *just* on the light side: luminance 0.2126 against the
+        // L* = 50 threshold of 0.1842. That is the red channel's 0.2126 weight
+        // doing all the work — pure blue, weighted 0.0722, is comfortably dark —
+        // and it is the right answer, since black text on pure red has a better
+        // contrast ratio than white does.
+        assert!(line.contains("\"dark\":false"), "{line}");
+        assert!(
+            parse_reply("11;rgb:0/0/f").unwrap().rgb.is_dark(),
+            "pure blue is the dark one of the two"
+        );
     }
 
     #[test]

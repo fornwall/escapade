@@ -1,11 +1,407 @@
-# PLACEHOLDER — being written. See glyph-protocol.toml for the full schema.
+# Clipboard access from a remote host
+#
+# One file per terminal feature. Everything `escapade clipboard explain` prints
+# comes from here, so prose edits need no Rust changes.
+#
+# Conventions (see ../../CONTRIBUTING.md):
+#   * Use TOML literal strings (three single quotes) for prose, so backslash
+#     sequences survive verbatim.
+#   * Write sequences symbolically: ESC, CSI, OSC, ST, BEL — never embed a real
+#     0x1b byte in this file. `escapade` prints these as text, and a literal
+#     control byte here would be executed by the reader's terminal instead.
+#   * One source line per paragraph. termimad re-wraps each source line on its
+#     own, so a hard-wrapped paragraph wraps twice and comes out ragged.
+#   * Every `[[support]]` row should carry a `source` so a reader can check it.
+#
+# Nearly every claim below was read out of the implementation rather than out of
+# its documentation, because for this feature the documentation and the code
+# disagree in several places that matter — most sharply about what xterm allows
+# by default, and about what tmux does with the sequence.
 
 id = "clipboard"
 name = "Clipboard access"
 tagline = "Reach the clipboard of the machine the human is sitting at, from the machine the program runs on."
-status = "experimental"
+status = "de-facto-standard"
+author = "xterm"
 transport = "OSC"
+spec_url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
 
 summary = '''
-Placeholder. This feature file is being written.
+The clipboard belongs to the machine the human is sitting at. Your program almost certainly does not run there — it runs over ssh, in a container, in a CI runner, in a VM, in a devcontainer — and every clipboard API on that machine talks to the wrong window system, or to no window system at all. `xclip`, `pbcopy` and `wl-copy` fail for the same reason: they are on the wrong side of the network.
+
+```
+OSC 52 ; Pc ; Pd ST
+```
+
+This sequence goes the other way. It travels back up the same stream the program's output already travels, arrives at the terminal emulator the human is looking at, and *that* program — which is on the right machine, with the right window system — puts the text on the clipboard. It is the only mechanism that works from the far end of an ssh hop, and that is why it has been reimplemented in vim, neovim, emacs, tmux, kitty's own kittens and roughly every terminal library on the internet.
+
+`Pc` says which selection. `Pd` decides which of three completely different things happens: **base64** sets the selection, **`?`** asks the terminal to send it back, and **empty** clears it.
+
+The two halves of the protocol have almost nothing in common. Writing is ordinary — no reply, no acknowledgement, discarded by terminals that do not implement it, and impossible to inject into, because base64's alphabet contains no `ESC`. Reading is the only sequence in this whole collection that carries data *out* of your session, on the input stream, invisibly, and a program on a compromised host can use it to take the password you copied a minute ago. Terminals treat the two accordingly: writing is usually on, reading is usually off, and the terminals that allow reading mostly ask you first.
 '''
+
+problem = '''
+The alternative is to move the text by hand, and the ways people do that are all worse:
+
+* **Select it with the mouse.** Works, until the text is longer than the screen, or spans a wrapped line, or is inside `less`, or contains a table you have just torn a column out of.
+* **Write it to a file and `scp` it back.** Two more commands, a credential, and a file to clean up, for a commit hash.
+* **Run a clipboard tool on the remote machine.** `xclip` on a machine with no X server is an error message; with X forwarding it is a security hole and a round trip per keystroke.
+* **`ssh -X`, or a shared filesystem, or a paste service.** Each is a whole subsystem in place of a string.
+
+There is a real alternative, and it is worth naming: **the terminal's own copy shortcut**, driven by the *user* rather than by the program. Every terminal has one, none of them can be scripted, and none of them helps a program that wants to hand you something. The point of this sequence is that it is available to the *program* — `git rev-parse HEAD | escapade clipboard copy` — which is a different capability, not a more convenient one.
+
+The one thing it does not displace is pasting *into* the terminal. Typing Ctrl-V has always worked, needs no protocol, and is not what the read half is for; the read half is for a program that wants your clipboard without you offering it, which is exactly why it is usually refused.
+'''
+
+how_it_works = '''
+It is an **OSC** — Operating System Command — string, the class of escape sequence used to talk to the terminal about things outside the grid:
+
+```
+OSC 52 ; Pc ; Pd ST
+```
+
+`OSC` is `ESC ]` and `ST` is the string terminator `ESC \`. `BEL` is accepted in place of `ST` everywhere, and a terminal that answers a query echoes back whichever terminator you used — but prefer `ST`: it is the standards-conforming one, and a stray `BEL` in an outgoing sequence has been known to make a terminal beep.
+
+**`Pc` is a list, not a value.** xterm reads it as zero or more characters from `c p q s 0 1 2 3 4 5 6 7`, meaning clipboard, primary, secondary, the configurable selection, and cut buffers 0 through 7, in the order given. An empty `Pc` means `s0`. In practice everything outside xterm implements `c`, most implement `p` and `s`, and nothing implements the cut buffers, so `c` is what to send.
+
+**`Pd` decides the operation.** Base64 sets the selection. A literal `?` asks for it back. Anything else — including an empty payload — clears the selection, which xterm states outright: *"If the second parameter is neither a base64 string nor `?`, then the selection is cleared."*
+
+**There is no reply to a write, and no error for one that failed.** A terminal that does not implement the sequence consumes the string and does nothing, exactly as it does for any unknown OSC. Nothing is printed, no cell is touched, no mode is left set — so writing is safe to emit unconditionally, and impossible to verify by emitting.
+
+**Support is asked about with device attributes, of all things.** Terminal authors agreed on an extension: a terminal that allows clipboard writes puts `52` among the parameters of its Primary Device Attributes reply.
+
+```
+→  CSI c
+←  CSI ? 62 ; 22 ; 52 c
+```
+
+The spec's requirement is the interesting part: *"If a terminal has an option to disable clipboard access, it MUST only indicate support for this extension when writing to the clipboard is actually allowed."* So this answers a question about **the session in front of you**, not about a version number in somebody's table — foot removes the `52` from that reply when the user turns clipboard writes off. `escapade clipboard probe` sends `CSI c` as its barrier anyway, to tell a silent terminal from a slow one, so the measurement costs nothing extra.
+
+The absence of `52` proves nothing at all. xterm has implemented this sequence for many years and does not advertise it, and neither do Alacritty, Konsole or Rio, all of which write to the clipboard perfectly well.
+'''
+
+payload = '''
+## The encoding is the safety property
+
+Base64's alphabet is `A`–`Z`, `a`–`z`, `0`–`9`, `+`, `/` and `=`. None of those is `ESC`, none is `BEL`, and none is the `;` that separates the fields — so there is no input, however hostile, that can end the string early and have the rest of itself read as a fresh escape sequence. That is why this feature ships no sanitizer while `hyperlink`, `notification` and `style` all need one: the encoding *is* the sanitizer, and it is not optional.
+
+Two rules come with it. **No line breaks** — RFC 4648 allows wrapping and the clipboard extension asks for none, because several terminals stop reading at the first byte outside the alphabet and a payload wrapped at 76 columns therefore arrives truncated. And **encode bytes, not characters**: a clipboard is not obliged to hold UTF-8, and `escapade clipboard copy` reads its input as bytes and passes them through unchanged, trailing newline included, the way `pbcopy` does.
+
+## Size limits
+
+There is no limit in the protocol, and several in practice. The smallest by default is tmux's, because tmux drops an over-long sequence *whole* rather than truncating it — a copy that looks like it worked and delivered nothing:
+
+| | limit | what happens past it |
+|---|---|---|
+| tmux | `input-buffer-size`, 1048576 bytes | the sequence is discarded |
+| kitty | `clipboard_max_size`, 512 MB | not stored; zero means no limit |
+| everywhere else | not documented | unknown, and worth measuring before relying on |
+
+Base64 costs a third on top, so a payload near a limit is smaller than it looks: 1 MB on the wire is about 786 KB of text.
+
+## What comes back from a read
+
+```
+→  OSC 52 ; c ; ? ST
+←  OSC 52 ; c ; ZXNjYXBhZGU= ST
+```
+
+The answer arrives **on the input stream**, in among keystrokes, which has three consequences worth knowing. A program that asks must be in raw mode, or the reply sits in the line buffer until the user presses Enter — after being echoed at them. A program that asks and then does not read the answer leaves it to be delivered to whatever runs next, usually the shell, which prints `52;c;…` at the prompt. And a program that asks must have some way of knowing when *not* to wait, since a refusal looks exactly like a slow answer.
+
+`escapade` handles the last one the way every probe here does: it sends a Primary Device Attributes request behind the query as a barrier. Terminals process input in order, so a barrier reply that arrives with no clipboard reply before it proves the terminal reached the query and declined. Inside a multiplexer that proof is void, because the multiplexer answers the barrier itself.
+'''
+
+security = '''
+This is the sequence people mean when they say escape sequences are dangerous, and the danger is real — but it is worth being precise about which half is dangerous and why, because the two halves fail in opposite directions.
+
+## Reading is an exfiltration channel
+
+A program that can send `OSC 52 ; c ; ? ST` can read your clipboard. Not the clipboard of the machine it runs on — *yours*, on your laptop, from the far side of an ssh connection, silently, with no window and no notification. Clipboards hold passwords, tokens, private keys and half-written messages, usually for a few seconds and often for hours.
+
+The attack needs no compromise of anything: it needs one string of bytes to reach your terminal. `cat` a hostile file, `tail` a log an attacker can write to, print a filename, print a git branch name — any of those delivers the sequence, and the answer comes back over stdin looking like something you typed.
+
+So terminals refuse by default, and the shape of the refusal differs:
+
+* kitty and Ghostty **ask the user** — `read-clipboard-ask` and `clipboard-read = ask`.
+* Alacritty ships `osc52 = "OnlyCopy"`; mintty ships `AllowPasteSelection=false`; xterm has `GetSelection` in its `disallowedWindowOps` default.
+* WezTerm, Windows Terminal and Zellij simply ignore the query, with no way to turn it on.
+* foot allows it, and requires the window to have keyboard focus.
+
+## Writing is a paste trap
+
+Writing cannot inject anything into your terminal — the base64 alphabet sees to that. What it can do is leave something on your clipboard and wait.
+
+```
+OSC 52 ; c ; ZWNobyBwd25lZAo= ST
+```
+
+That payload is `echo pwned` **with a trailing newline**. Pasted into a shell that is not using bracketed paste, it does not land on the prompt waiting for you to read it; it runs. And you will paste it, because you copied something a moment ago and expect that to be what arrives.
+
+The defences are not in the encoding:
+
+* **Bracketed paste** (`CSI ? 2004 h`), which every current shell enables, delivers pasted text as text rather than as keystrokes.
+* **Paste protection** — Ghostty's `clipboard-paste-protection`, on by default — asks before pasting anything that contains a newline.
+* Noticing. `escapade clipboard copy` prints a note on stderr when the text you are copying ends in a newline. It still copies it; that is your business.
+
+## What escapade does about it
+
+* The write is built from a selection code and a base64 payload, so no string reaches the sequence unencoded. Hostile input is not merely escaped, it is unrepresentable.
+* The read is sent **only** by `escapade clipboard paste`, never by `probe` and never by `demo`, even with `--force`. A probe that raises a permission dialog is not a probe, and a demo that reads your clipboard to show you that it can has misunderstood the assignment.
+* `paste` refuses outright on Konsole, where the query destroys the clipboard rather than answering it, and says why. `--force` overrides.
+* Every reply provoked is drained before returning, so no fragment of your clipboard is left to be printed at your next shell prompt.
+'''
+
+caveats = '''
+**tmux ignores this sequence from applications by default, and its own manual page does not quite say so.** `set-clipboard` defaults to `external`, and the manual explains that as "tmux will attempt to set the terminal clipboard but ignore attempts by applications to set tmux buffers" — which reads as though the sequence is forwarded and only the buffer is skipped. The code is unambiguous: `input_osc_52_parse` returns immediately unless `set-clipboard` is `on`, so under the default nothing an application sends is looked at, and what `external` really means is that tmux sets the terminal clipboard for **its own** copy-mode copies. To make it work: `set -s set-clipboard on`, plus an `Ms` capability for tmux to forward through, which usually means `set -as terminal-features ',*:clipboard'`.
+
+**tmux answers the read query itself.** `get-clipboard` defaults to `buffer`, so `OSC 52 ; c ; ?` inside tmux comes back holding tmux's newest paste buffer rather than the system clipboard. That is a sensible default and a surprising one: the answer is well-formed, plausible, and about something else. `request` and `both` ask the client terminal instead.
+
+**xterm, which invented this, refuses it out of the box.** `allowWindowOps` defaults to `false`, and `disallowedWindowOps` then defaults to a list containing both `SetSelection` and `GetSelection` — so neither writing nor reading works in a stock xterm, silently. tmux's manual tells you the incantation: `disallowedWindowOps: 20,21,SetXprop`.
+
+**Asking Konsole to read destroys the clipboard.** Konsole has no branch for `?` at all: the query falls through to the write path, `QByteArray::fromBase64` discards the `?` as an invalid character, and the clipboard is set to the empty string. It is the only implementation found where a *query* is destructive, and it is why `escapade clipboard paste` refuses there without `--force`.
+
+**Windows Terminal ignores `Pc` entirely.** Its parser comments say so — "Currently the first parameter `Pc` is ignored" — so asking for the primary selection writes the system clipboard instead. Nothing is lost, but nothing is honoured either.
+
+**Konsole treats `s` as the clipboard**, where xterm's `s` is the configurable selection and foot and Rio read it as the primary one. If you care which selection you land on, send `c` or `p` and nothing else.
+
+**foot requires keyboard focus.** A write or a read from a window that is not focused is dropped, with a line in the log — which makes a copy from a background job silently do nothing.
+
+**GNU Screen and vanilla st have no implementation at all**, and VTE's is a deliberate absence rather than an oversight: its parser table names OSC 52 `XTERM_SET_XSELECTION` and the handler falls through to `default: break`. That covers GNOME Terminal and everything else built on VTE.
+'''
+
+# ---------------------------------------------------------------------------
+# The sequences.
+# ---------------------------------------------------------------------------
+
+[[sequence]]
+name = "Set"
+purpose = "Put bytes on a selection."
+request = "OSC 52 ; Pc ; <base64> ST"
+notes = '''No reply, no acknowledgement, and no error if the terminal does not implement it. Safe to send unconditionally: an unknown OSC is consumed and discarded, so nothing is printed and no state is left behind.'''
+
+[[sequence]]
+name = "Clear"
+purpose = "Take a selection away."
+request = "OSC 52 ; Pc ; ST"
+notes = '''An empty payload. xterm clears the selection for any `Pd` that is neither base64 nor `?`, and the clipboard extension asks for the empty form specifically. Worth knowing because it is easy to send by accident: a script that copies the output of a command which produced nothing has cleared the user's clipboard.'''
+
+[[sequence]]
+name = "Query"
+purpose = "Ask the terminal to send a selection back."
+request = "OSC 52 ; Pc ; ? ST"
+reply = "OSC 52 ; Pc ; <base64> ST"
+notes = '''The half that is usually disabled, and the only sequence in this collection that carries data out of the user's session. The reply arrives on the input stream, so the sender must be in raw mode and must drain whatever it provoked. Send a Primary Device Attributes request behind it as a barrier, or silence and slowness are indistinguishable.'''
+
+[[sequence]]
+name = "Capability check"
+purpose = "Ask whether clipboard writes are allowed, using Primary Device Attributes."
+request = "CSI c"
+reply = "CSI ? 62 ; … ; 52 c"
+notes = '''Not part of OSC 52 itself: an extension agreed between terminal authors, which reserves the device-attributes parameter `52` for "clipboard writes work here". A conforming terminal must withdraw it when the user disables clipboard access, so this describes the session rather than the build. Its absence means nothing — several terminals that implement the write have not adopted it.'''
+
+# ---------------------------------------------------------------------------
+# Parameters.
+# ---------------------------------------------------------------------------
+
+[[param]]
+key = "Pc"
+applies_to = "every form"
+default = "s0"
+description = "Which selections to act on, as a list of characters from `c p q s 0`–`7`: clipboard, primary, secondary, the configurable selection, and cut buffers 0 through 7. Everything implements `c`; most implement `p` and `s`, with disagreement about what `s` means; nothing outside xterm implements `q` or the cut buffers. Windows Terminal ignores the field entirely."
+
+[[param]]
+key = "Pd"
+applies_to = "every form"
+default = ""
+description = "The payload, which decides the operation: base64 sets the selection, `?` asks for it, and anything else — including nothing — clears it. Base64 must be unwrapped: some terminals stop reading at the first byte outside the alphabet."
+
+# ---------------------------------------------------------------------------
+# Who is using it.
+# ---------------------------------------------------------------------------
+
+[[user]]
+name = "neovim"
+kind = "application"
+url = "https://neovim.io/doc/user/provider.html"
+notes = "Ships an OSC 52 clipboard provider and uses it automatically over ssh. Also reads the device-attributes extension to decide whether to bother."
+
+[[user]]
+name = "vim"
+kind = "application"
+url = "https://github.com/vim/vim"
+notes = "Where most people first met this: the `vim-oscyank` plugin existed because there was no other way to yank from a remote host into the local clipboard."
+
+[[user]]
+name = "tmux"
+kind = "multiplexer"
+url = "https://github.com/tmux/tmux"
+notes = "Both ends at once. It emits OSC 52 to set the outer terminal's clipboard from copy mode, consumes it from applications when `set-clipboard on`, and answers the read query itself from its own paste buffers."
+
+[[user]]
+name = "emacs"
+kind = "application"
+url = "https://www.gnu.org/software/emacs"
+notes = "Uses the device-attributes extension to decide whether the terminal it is attached to can be handed the selection."
+
+[[user]]
+name = "dte"
+kind = "application"
+url = "https://github.com/craigbarnes/dte"
+notes = "An editor small enough to read, with an implementation of both the sequence and the capability check."
+
+[[user]]
+name = "OSC52.sh and friends"
+kind = "library"
+url = "https://github.com/theimpostor/osc"
+notes = "The genre. Dozens of small tools and shell functions exist purely to emit this one sequence, which is the clearest evidence of how badly it was needed and how poorly it was known."
+
+# ---------------------------------------------------------------------------
+# Support. Statuses describe *writing*; reading is in the notes, because it is a
+# separate permission almost everywhere.
+# ---------------------------------------------------------------------------
+
+[[support]]
+terminal = "foot"
+status = "yes"
+notes = "The most complete implementation found: `security.osc52` defaults to `enabled`, which allows both writing and reading, with `copy-enabled` and `paste-enabled` for one direction each. Both directions require the window to have keyboard focus — an unfocused window drops the sequence and logs it, so a copy from a background job silently does nothing. Advertises the device-attributes extension only when copying is allowed."
+source = "https://codeberg.org/dnkl/foot/src/branch/master/osc.c"
+
+[[support]]
+terminal = "kitty"
+status = "yes"
+notes = "`clipboard_control` defaults to `write-clipboard write-primary read-clipboard-ask read-primary-ask`: writing to both selections is allowed outright, and a read raises a confirmation. `clipboard_max_size` defaults to 512 MB, with zero meaning no limit. Its device-attributes reply gains the `52` only when `write-clipboard` is allowed, and its source cites the extension spec at the line that does it."
+source = "https://github.com/kovidgoyal/kitty/blob/master/kitty/window.py"
+
+[[support]]
+terminal = "ghostty"
+status = "yes"
+notes = "`clipboard-write` defaults to `allow` and `clipboard-read` to `ask`; both take `ask`, `allow` and `deny`. `clipboard-paste-protection` is on by default, which is the defence against the trailing-newline trap rather than against the sequence itself."
+source = "https://github.com/ghostty-org/ghostty/blob/main/src/config/Config.zig"
+
+[[support]]
+terminal = "wezterm"
+status = "yes"
+notes = "Writing and clearing work; reading does not, and the documentation says so in one line: \"Requests to query the clipboard are ignored.\" There is no setting to enable it."
+source = "https://wezterm.org/escape-sequences.html"
+
+[[support]]
+terminal = "alacritty"
+status = "yes"
+notes = "`[terminal] osc52` defaults to `OnlyCopy`, and the other values are `Disabled`, `OnlyPaste` and `CopyPaste`. The documentation states the reasoning: allowing reads \"can be easily abused while not providing significant benefits over explicitly pasting text\". Has not adopted the device-attributes extension, so a probe falls back to inference here."
+source = "https://github.com/alacritty/alacritty/blob/master/extra/man/alacritty.5.scd"
+
+[[support]]
+terminal = "rio"
+status = "yes"
+notes = "Implements both directions: `clipboard_store` decodes base64 into the clipboard or the primary selection, and `clipboard_load` encodes the answer and sends it back with whichever terminator the query used. Reads `p` and `s` as the primary selection."
+source = "https://github.com/raphamorim/rio/blob/main/rio-vt/src/crosswords/mod.rs"
+
+[[support]]
+terminal = "contour"
+status = "yes"
+notes = "The terminal whose author wrote the device-attributes extension down and collected the other implementations' agreement to it."
+source = "https://github.com/contour-terminal/vt-extensions/blob/master/clipboard-extension.md"
+
+[[support]]
+terminal = "iterm2"
+status = "yes"
+notes = "Adopted the device-attributes extension, which per that spec means writing is allowed when it advertises it. iTerm2 also has an older proprietary route to the same place, `OSC 1337 ; Copy=`, which predates its OSC 52 support and is what its own documentation describes."
+source = "https://github.com/contour-terminal/vt-extensions/blob/master/clipboard-extension.md"
+
+[[support]]
+terminal = "windows-terminal"
+status = "partial"
+notes = "Writing works. The selection field is ignored entirely — the parser's own comment says \"Currently the first parameter `Pc` is ignored\" — so asking for the primary selection writes the system clipboard. A query is recognised, parsed, and then deliberately not dispatched: the code reads `if (… && !queryClipboard)`, which is as explicit a refusal as source can be."
+source = "https://github.com/microsoft/terminal/blob/main/src/terminal/parser/OutputStateMachineEngine.cpp"
+
+[[support]]
+terminal = "konsole"
+status = "partial"
+notes = "Writing works, with two flaws. `s` is treated as the clipboard rather than as a selection, so it disagrees with xterm, foot and Rio. And there is no branch for `?` at all: a read query takes the write path, `QByteArray::fromBase64` discards the `?` as invalid, and the clipboard is set to the empty string — so asking Konsole to read your clipboard destroys it. `escapade clipboard paste` refuses here without `--force`."
+source = "https://invent.kde.org/utilities/konsole/-/blob/master/src/Vt102Emulation.cpp"
+
+[[support]]
+terminal = "mintty"
+status = "flag"
+notes = "Both directions are implemented and both are off: `AllowSetSelection` and `AllowPasteSelection` default to false, and the manual says why in one sentence each — \"remote software may set malicious clipboard contents\" and \"malicious software could spy on your clipboard\". Turn them on in the options dialog or in the config file."
+source = "https://github.com/mintty/mintty/blob/master/src/config.c"
+
+[[support]]
+terminal = "xterm"
+status = "flag"
+notes = "The terminal this sequence comes from refuses it out of the box, in both directions and silently. `allowWindowOps` defaults to false, and `disallowedWindowOps` then defaults to `GetChecksum,GetIconTitle,GetSelection,GetWinTitle,SetSelection,SetXprop` — the write is `SetSelection` and the read is `GetSelection`, so both are in the disabled list. tmux's manual page carries the fix: `disallowedWindowOps: 20,21,SetXprop`."
+source = "https://invisible-island.net/xterm/manpage/xterm.html"
+
+[[support]]
+terminal = "zellij"
+status = "partial"
+notes = "Writing reaches the system clipboard through Zellij itself rather than through the terminal beyond it. Reading is explicitly unimplemented — the source has a `b\"?\"` branch whose whole body is a comment reading \"TBD: paste from own clipboard - currently unsupported\". Zellij does advertise the extension: its device-attributes reply is `CSI ? 62 ; 4 ; 52 c`."
+source = "https://github.com/zellij-org/zellij/blob/main/zellij-server/src/panes/grid.rs"
+
+[[support]]
+terminal = "tmux"
+status = "passthrough"
+notes = "Two options, both surprising. `set-clipboard` defaults to `external`, and under anything but `on` tmux ignores OSC 52 from applications outright: the parse function returns immediately unless the value is `on`. `external` means tmux sets the terminal clipboard for its own copy-mode copies, not that it forwards yours. With `on`, forwarding onward also needs an `Ms` capability, usually `set -as terminal-features ',*:clipboard'`. A read is answered by tmux itself: `get-clipboard` defaults to `buffer`, so what comes back is tmux's newest paste buffer rather than the system clipboard. Sequences over `input-buffer-size` — 1048576 bytes by default — are discarded whole."
+source = "https://github.com/tmux/tmux/blob/master/input.c"
+
+[[support]]
+terminal = "gnome-terminal"
+status = "no"
+notes = "A deliberate absence rather than an oversight. VTE's OSC table names the number — `_VTE_OSC(XTERM_SET_XSELECTION, 52)` — and the handler switch lists `VTE_OSC_XTERM_SET_XSELECTION` among the cases that fall through to `default: break`. So the string is parsed, recognised, and dropped. This covers every VTE-based terminal, GNOME Terminal and Xfce Terminal among them."
+source = "https://gitlab.gnome.org/GNOME/vte/-/blob/master/src/vteseq.cc"
+
+[[support]]
+terminal = "st"
+status = "no"
+notes = "Vanilla st has no OSC 52 handling at all; the number does not appear in `st.c`. Patches exist, as they do for everything in st."
+source = "https://git.suckless.org/st/plain/st.c"
+
+[[support]]
+terminal = "vscode"
+status = "unknown"
+notes = "xterm.js, the engine VS Code embeds, does not register a handler for OSC 52: the number appears only in the comment listing the sequences it has not implemented, and the extension spec records xterm.js as not yet adopted. Whether VS Code adds its own handler on top was not checked here — check it, and this row can be settled either way."
+source = "https://github.com/xtermjs/xterm.js/blob/master/src/common/InputHandler.ts"
+
+[[support]]
+terminal = "screen"
+status = "unknown"
+notes = "Not checked. GNU Screen's source could not be reached while this file was written, and no claim is better than a guess about it."
+
+[[support]]
+terminal = "conemu"
+status = "unknown"
+notes = "Not checked."
+
+[[support]]
+terminal = "warp"
+status = "unknown"
+notes = "Not checked."
+
+[[support]]
+terminal = "wayst"
+status = "unknown"
+notes = "Not checked."
+
+# ---------------------------------------------------------------------------
+# Further reading.
+# ---------------------------------------------------------------------------
+
+[[resource]]
+title = "xterm control sequences — Manipulate Selection Data"
+url = "https://invisible-island.net/xterm/ctlseqs/ctlseqs.html"
+
+[[resource]]
+title = "The clipboard extension: 52 in the device-attributes reply, and who has adopted it"
+url = "https://github.com/contour-terminal/vt-extensions/blob/master/clipboard-extension.md"
+
+[[resource]]
+title = "kitty's clipboard_control and clipboard_max_size"
+url = "https://sw.kovidgoyal.net/kitty/conf/#opt-kitty.clipboard_control"
+
+[[resource]]
+title = "tmux set-clipboard and get-clipboard"
+url = "https://man.openbsd.org/tmux#set-clipboard"
+
+[[resource]]
+title = "xterm's allowWindowOps and disallowedWindowOps, which decide whether any of this works"
+url = "https://invisible-island.net/xterm/manpage/xterm.html"

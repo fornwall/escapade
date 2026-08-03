@@ -43,7 +43,6 @@
 pub mod checks;
 pub mod identity;
 pub mod json;
-pub mod modes;
 pub mod observe;
 pub mod report;
 pub mod session;
@@ -61,11 +60,11 @@ use anyhow::{Context as _, Result};
 
 use crate::{
     cli::{DoctorCommand, OutputFormat},
+    decrqm::{self, ModeState, Sentinel},
     features::{
         Support,
         doctor::{
             checks::{Catalogue, Check, CheckKind, ObservedProbe},
-            modes::{ModeState, Sentinel},
             observe::Erase,
             session::{Channel, NoChannel, Round, Session},
             verdict::{Agreement, Claim, Origin, Reading, agreement},
@@ -355,15 +354,15 @@ fn interrogate(
     // Round two: DECRQM, the impossible mode first.
     let modes = decrqm_modes(selected);
     if !modes.is_empty() {
-        let mut queries = modes::query(modes::SENTINEL_MODE);
+        let mut queries = decrqm::query(decrqm::SENTINEL_MODE);
         for &mode in &modes {
-            queries.push_str(&modes::query(mode));
+            queries.push_str(&decrqm::query(mode));
         }
         let round = session.round(&queries)?;
         answers.decrqm_barrier = round.answered_barrier;
         for reply in &round.replies {
-            if let Some((mode, state)) = modes::report_from_reply(reply) {
-                if mode == modes::SENTINEL_MODE {
+            if let Some((mode, state)) = decrqm::report_from_reply(reply) {
+                if mode == decrqm::SENTINEL_MODE {
                     answers.sentinel.state = Some(state);
                 } else {
                     answers.modes.insert(mode, state);
@@ -1462,7 +1461,7 @@ mod tests {
         let catalogue = catalogue();
         let selected: Vec<&Check> = catalogue.checks().iter().collect();
         let modes = decrqm_modes(&selected);
-        assert!(!modes.contains(&modes::SENTINEL_MODE));
+        assert!(!modes.contains(&decrqm::SENTINEL_MODE));
         assert!(!modes.is_empty(), "some check should use DECRQM");
         let mut sorted = modes.clone();
         sorted.sort_unstable();

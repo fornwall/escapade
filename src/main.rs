@@ -21,6 +21,7 @@
 
 mod cli;
 mod db;
+mod decrqm;
 mod features;
 mod input;
 mod term;

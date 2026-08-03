@@ -38,6 +38,7 @@ use crate::{
     features::{
         grapheme::{
             Finding, MODE, ModeState, REFERENCE_SEQUENCE, Reliability, SENTINEL_MODE, barrier,
+            explanation,
             cluster, json,
             measure::{self, Comparison, ModeReport, Ruler, Verdict},
             query, sentinel_query,
@@ -371,7 +372,7 @@ fn claim(theme: &Theme, outcome: &ProbeOutcome) {
                 theme.paint(state.label(), ink),
                 theme.paint(&format!("(DECRPM value {})", state.value()), Ink::Muted)
             );
-            for line in note_lines(theme, state.explanation()) {
+            for line in note_lines(theme, explanation(state)) {
                 println!("{line}");
             }
             if state.settable() {
