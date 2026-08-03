@@ -1,3 +1,6 @@
+> [!WARNING]
+> **Experimental.** escapade is AI-generated and has not seen real world usage.
+
 # escapade
 
 Demonstrate, visualize, play with and actually use modern terminal features.
