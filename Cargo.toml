@@ -20,7 +20,7 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "gi
 infer = "0.22.0"
 inferno = "0.12.8"
 miniz_oxide = "0.9.1"
-resvg = "0.47.0"
+resvg = "0.48.1"
 serde = { version = "1.0.229", features = ["derive"] }
 termimad = "0.35.1"
 toml = "1.1.4"
